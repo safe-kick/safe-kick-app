@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, KeyboardAvoidingView, Platform, ScrollView,
+} from 'react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { T } from '../constants/colors';
 import { TopBar } from '../components/ui';
+import { apiCall } from '../utils/api';
 
 function ProgressDots({ total = 3, active = 0 }: { total?: number; active?: number }) {
   return (
@@ -23,14 +28,22 @@ export default function RegisterScreen() {
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleNext = async () => {
-    if (!name || !email || !password || !passwordConfirm) return;
-    if (password !== passwordConfirm) return;
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 600));
-    setLoading(false);
-    router.push('/license-capture');
+    if (!name || !email || !password || !passwordConfirm) { setError('모든 항목을 입력하세요.'); return; }
+    if (password !== passwordConfirm) { setError('비밀번호가 일치하지 않습니다.'); return; }
+    setLoading(true); setError('');
+    try {
+      // POST /auth/register
+      const res = await apiCall('POST', '/auth/register', { name, email, phone, password });
+      await AsyncStorage.setItem('token', res.data.token);
+      router.push('/license-capture');
+    } catch (e: any) {
+      setError(e.message || '회원가입에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -59,7 +72,6 @@ export default function RegisterScreen() {
             </View>
           ))}
 
-          {/* 약관 동의 */}
           <TouchableOpacity style={s.agreeRow} onPress={() => setAgreed(!agreed)}>
             <View style={[s.checkbox, agreed && s.checkboxActive]}>
               {agreed && <Text style={s.checkmark}>✓</Text>}
@@ -67,10 +79,9 @@ export default function RegisterScreen() {
             <Text style={s.agreeText}>이용약관 및 개인정보처리방침에 동의합니다</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[s.btn, loading && s.btnDisabled]}
-            onPress={handleNext} disabled={loading}
-          >
+          {error ? <Text style={s.errorText}>{error}</Text> : null}
+
+          <TouchableOpacity style={[s.btn, loading && s.btnDisabled]} onPress={handleNext} disabled={loading}>
             <Text style={s.btnText}>{loading ? '처리 중...' : '다음 단계  →'}</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -96,6 +107,7 @@ const s = StyleSheet.create({
   checkboxActive: { backgroundColor: T.text, borderColor: T.text },
   checkmark: { color: '#FFF', fontSize: 12, fontWeight: '700' },
   agreeText: { flex: 1, fontSize: 13, color: T.textSub, lineHeight: 20 },
+  errorText: { fontSize: 12, color: T.err },
   btn: { height: 48, backgroundColor: T.text, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   btnDisabled: { opacity: 0.5 },
   btnText: { color: '#FFF', fontSize: 14, fontWeight: '600' },

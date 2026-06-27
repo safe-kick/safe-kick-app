@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { T } from '../constants/colors';
 
 // 개발 중 토큰 강제 초기화 — 배포 전 false로
-const DEV_CLEAR_TOKEN = false;
+const DEV_CLEAR_TOKEN = true;
 
 // 닷 하나의 애니메이션 컴포넌트
 function PulseDot({ delay }: { delay: number }) {

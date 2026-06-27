@@ -1,9 +1,10 @@
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { T } from '../constants/colors';
 import { WFCard, WFBadge } from '../components/ui';
-import { mockUserMe, mockRides } from '../mock/data';
+import { apiCall } from '../utils/api';
 
 function ListItem({ icon, label, sub, danger, right = true }: {
   icon: string; label: string; sub?: string; danger?: boolean; right?: boolean;
@@ -22,14 +23,8 @@ function ListItem({ icon, label, sub, danger, right = true }: {
   );
 }
 const li = StyleSheet.create({
-  row: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.border,
-  },
-  iconBox: {
-    width: 36, height: 36, borderRadius: 8,
-    backgroundColor: T.fill, alignItems: 'center', justifyContent: 'center',
-  },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.border },
+  iconBox: { width: 36, height: 36, borderRadius: 8, backgroundColor: T.fill, alignItems: 'center', justifyContent: 'center' },
   label: { fontSize: 14, fontWeight: '500', color: T.text },
   sub: { fontSize: 12, color: T.textMuted, marginTop: 1 },
   chevron: { fontSize: 18, color: T.textMuted },
@@ -44,8 +39,31 @@ function dur(a: string, b: string) {
 }
 
 export default function MyPageScreen() {
-  const u = mockUserMe.data;
-  const rides = mockRides.data;
+  const [user, setUser] = useState<any>(null);
+  const [rides, setRides] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      // GET /users/me + GET /rides 병렬 호출
+      const [userRes, ridesRes] = await Promise.all([
+        apiCall('GET', '/users/me'),
+        apiCall('GET', '/rides'),
+      ]);
+      setUser(userRes.data);
+      setRides(ridesRes.data);
+    } catch {
+      // 서버 실패 시 AsyncStorage에서 user 정보 fallback
+      const raw = await AsyncStorage.getItem('user').catch(() => null);
+      if (raw) setUser(JSON.parse(raw));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert('로그아웃', '계정에서 로그아웃하시겠습니까?', [
@@ -57,9 +75,14 @@ export default function MyPageScreen() {
     ]);
   };
 
+  if (loading) return (
+    <View style={{ flex: 1, backgroundColor: T.bg, alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color={T.text} />
+    </View>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: T.bgAlt }}>
-      {/* ── TopBar — 뒤로가기 버튼 추가 ── */}
       <View style={s.topBar}>
         <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
           <Text style={s.backIcon}>‹</Text>
@@ -69,43 +92,44 @@ export default function MyPageScreen() {
       </View>
 
       <ScrollView>
-        {/* 프로필 */}
         <View style={s.profileSection}>
           <View style={s.profileRow}>
             <View style={s.avatar} />
             <View style={{ flex: 1 }}>
-              <Text style={s.name}>{u.name}</Text>
-              <Text style={s.email}>{u.email}</Text>
+              <Text style={s.name}>{user?.name ?? '-'}</Text>
+              <Text style={s.email}>{user?.email ?? '-'}</Text>
             </View>
             <WFBadge label="인증 완료" status="ok" />
           </View>
         </View>
 
         <View style={s.body}>
-          {/* 면허증 */}
-          <Text style={s.sectionLabel}>등록된 면허증</Text>
-          <WFCard style={{ marginBottom: 16 }}>
-            <View style={s.licenseRow}>
-              <View style={s.licenseImg}>
-                <Text style={{ fontSize: 10, color: T.textMuted }}>면허증</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.licenseType}>2종 보통</Text>
-                <Text style={s.licenseNo}>{u.license.license_no}</Text>
-                <Text style={s.licenseExp}>만료: {u.license.expires_at}</Text>
-              </View>
-              <WFBadge label="유효" status="ok" />
-            </View>
-            <View style={s.privacyBox}>
-              <Text style={s.privacyText}>
-                🔒  얼굴 벡터 데이터는 세션 종료 시 자동 삭제됩니다. 서버에 저장되지 않습니다.
-              </Text>
-            </View>
-          </WFCard>
+          {user?.license && (
+            <>
+              <Text style={s.sectionLabel}>등록된 면허증</Text>
+              <WFCard style={{ marginBottom: 16 }}>
+                <View style={s.licenseRow}>
+                  <View style={s.licenseImg}><Text style={{ fontSize: 10, color: T.textMuted }}>면허증</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.licenseType}>2종 보통</Text>
+                    <Text style={s.licenseNo}>{user.license.license_no}</Text>
+                    <Text style={s.licenseExp}>만료: {user.license.expires_at}</Text>
+                  </View>
+                  <WFBadge label="유효" status="ok" />
+                </View>
+                <View style={s.privacyBox}>
+                  <Text style={s.privacyText}>
+                    🔒  얼굴 벡터 데이터는 세션 종료 시 자동 삭제됩니다. 서버에 저장되지 않습니다.
+                  </Text>
+                </View>
+              </WFCard>
+            </>
+          )}
 
-          {/* 이용 내역 */}
           <Text style={s.sectionLabel}>최근 이용 내역</Text>
-          {rides.map(r => (
+          {rides.length === 0 ? (
+            <WFCard><Text style={s.emptyText}>이용 기록이 없습니다</Text></WFCard>
+          ) : rides.map(r => (
             <WFCard key={r.ride_id} style={s.rideCard}>
               <View>
                 <Text style={s.rideId}>{r.kickboard_id}</Text>
@@ -117,7 +141,6 @@ export default function MyPageScreen() {
             </WFCard>
           ))}
 
-          {/* 설정 */}
           <Text style={[s.sectionLabel, { marginTop: 8 }]}>설정</Text>
           <WFCard style={{ padding: 0, paddingHorizontal: 16, marginBottom: 12 }}>
             <ListItem icon="🔔" label="알림 설정" sub="푸시 알림 관리" />
@@ -140,23 +163,11 @@ export default function MyPageScreen() {
 }
 
 const s = StyleSheet.create({
-  // ── TopBar ──
-  topBar: {
-    flexDirection: 'row', alignItems: 'center', height: 52,
-    paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: T.border,
-    backgroundColor: T.bg,
-  },
-  backBtn: {
-    width: 36, height: 36, borderRadius: 10,
-    backgroundColor: T.fill, alignItems: 'center', justifyContent: 'center',
-  },
+  topBar: { flexDirection: 'row', alignItems: 'center', height: 52, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: T.bg },
+  backBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: T.fill, alignItems: 'center', justifyContent: 'center' },
   backIcon: { fontSize: 22, color: T.text, lineHeight: 28 },
   topTitle: { flex: 1, fontSize: 16, fontWeight: '600', color: T.text, textAlign: 'center' },
-
-  profileSection: {
-    padding: 20, paddingBottom: 16,
-    backgroundColor: T.bg, borderBottomWidth: 1, borderBottomColor: T.border,
-  },
+  profileSection: { padding: 20, paddingBottom: 16, backgroundColor: T.bg, borderBottomWidth: 1, borderBottomColor: T.border },
   profileRow: { flexDirection: 'row', gap: 14, alignItems: 'center' },
   avatar: { width: 58, height: 58, borderRadius: 29, backgroundColor: T.fill },
   name: { fontSize: 18, fontWeight: '700', color: T.text },
@@ -164,20 +175,15 @@ const s = StyleSheet.create({
   body: { padding: 16, paddingBottom: 40, gap: 8 },
   sectionLabel: { fontSize: 13, fontWeight: '700', color: T.textSub, letterSpacing: 0.3, marginBottom: 8 },
   licenseRow: { flexDirection: 'row', gap: 12, alignItems: 'center', marginBottom: 12 },
-  licenseImg: {
-    width: 56, height: 36, backgroundColor: T.fill, borderRadius: 6,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  licenseImg: { width: 56, height: 36, backgroundColor: T.fill, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   licenseType: { fontSize: 14, fontWeight: '600', color: T.text },
   licenseNo: { fontSize: 11, color: T.textMuted, marginTop: 2 },
   licenseExp: { fontSize: 11, color: T.textMuted },
   privacyBox: { backgroundColor: T.bgAlt, borderRadius: 8, padding: 8 },
   privacyText: { fontSize: 11, color: T.textMuted, lineHeight: 16 },
-  rideCard: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', padding: 14, marginBottom: 8,
-  },
+  rideCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, marginBottom: 8 },
   rideId: { fontSize: 13, fontWeight: '600', color: T.text },
   rideDate: { fontSize: 12, color: T.textMuted, marginTop: 2 },
+  emptyText: { fontSize: 13, color: T.textMuted, textAlign: 'center', padding: 16 },
   footer: { textAlign: 'center', fontSize: 11, color: T.textMuted, paddingBottom: 8 },
 });
