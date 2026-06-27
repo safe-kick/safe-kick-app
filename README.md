@@ -194,10 +194,10 @@ npx expo start --clear
 
 | 이름 | 역할 |
 |------|------|
-| 초세연 (SEIN) | 앱 프론트엔드 (React Native) |
+| 최세은 (SEIN) | 앱 프론트엔드 (React Native) |
 | 정재영 | 앱 백엔드 서버 (Node.js + PostgreSQL) |
 | 박종빈 | 하드웨어 / 펌웨어 (Raspberry Pi + STM32) |
-| 이재영 | AI 인증 시스템 (YOLO + InsightFace) |
+| 정재영, 최세은 | AI 인증 시스템 (YOLO + InsightFace) |
 
 ---
 
