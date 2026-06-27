@@ -1,98 +1,104 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { T } from '../constants/colors';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+// 개발 중 토큰 강제 초기화 — 배포 전 false로
+const DEV_CLEAR_TOKEN = true;
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+// 닷 하나의 애니메이션 컴포넌트
+function PulseDot({ delay }: { delay: number }) {
+  const opacity = useRef(new Animated.Value(0.25)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.25,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        // 나머지 두 닷이 돌아오길 기다리는 시간
+        Animated.delay(400 * 2 - delay > 0 ? 400 * 2 - delay : 0),
+      ])
     );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
+    anim.start();
+    return () => anim.stop();
+  }, []);
+
+  return <Animated.View style={[s.dot, { opacity }]} />;
+}
+
+export default function SplashScreen() {
+  useEffect(() => {
+    (async () => {
+      if (DEV_CLEAR_TOKEN) await AsyncStorage.clear();
+      await new Promise(r => setTimeout(r, 2000)); // 애니메이션 볼 수 있게 2초
+      try {
+        const token = await AsyncStorage.getItem('token');
+        router.replace(token ? '/main' : '/login');
+      } catch {
+        router.replace('/login');
+      }
+    })();
+  }, []);
+
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+    <View style={s.container}>
+      {/* 로고 */}
+      <View style={s.logoBox}>
+        <Text style={s.logoIcon}>🛴</Text>
+      </View>
+
+      {/* 앱명 */}
+      <View style={s.textWrap}>
+        <Text style={s.appName}>Safe Kick</Text>
+        <Text style={s.appSub}>전동 킥보드 안전 인증 서비스</Text>
+      </View>
+
+      {/* 로딩 닷 — 순차 페이드 애니메이션 */}
+      <View style={s.dots}>
+        <PulseDot delay={0} />
+        <PulseDot delay={200} />
+        <PulseDot delay={400} />
+      </View>
+
+      <Text style={s.version}>v1.0.0</Text>
+    </View>
   );
 }
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
-}
-
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
+    backgroundColor: T.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
-    textAlign: 'center',
+  logoBox: {
+    width: 88, height: 88, borderRadius: 22,
+    backgroundColor: T.fill,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 20,
   },
-  code: {
-    textTransform: 'uppercase',
+  logoIcon: { fontSize: 44 },
+  textWrap: { alignItems: 'center', marginBottom: 40 },
+  appName: { fontSize: 28, fontWeight: '700', color: T.text, letterSpacing: -0.5 },
+  appSub: { fontSize: 13, color: T.textMuted, marginTop: 6 },
+  dots: { flexDirection: 'row', gap: 8 },
+  dot: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: T.text,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  version: {
+    position: 'absolute', bottom: 48,
+    fontSize: 11, color: T.textMuted, letterSpacing: 0.5,
   },
 });

@@ -1,0 +1,474 @@
+import { router } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Alert, Animated,
+  ScrollView,
+  StyleSheet,
+  Text, TouchableOpacity,
+  View,
+} from 'react-native';
+import { WFBadge } from '../components/ui';
+import { T } from '../constants/colors';
+import { apiCall } from '../utils/api';
+
+// ─── 타입 ────────────────────────────────────────────────
+type Phase = 'normal' | 'remeasure' | 'slowdown' | 'stopped';
+
+interface SensorRow {
+  label: string;
+  status: 'ok' | 'warn' | 'info';
+  value: string;
+}
+
+// ─── 상수 ────────────────────────────────────────────────
+const REMEASURE_SEC = 8;
+const MAX_SPEED = 20;
+const WARNING_REASON = '이중 탑승 감지됨';
+
+// ─── 단계 인디케이터 ──────────────────────────────────────
+const STEPS = ['이상 감지', '재측정 중', '감속 중', '정지'];
+
+function StepIndicator({ phase }: { phase: Phase }) {
+  const activeIdx = { normal: -1, remeasure: 1, slowdown: 2, stopped: 3 }[phase];
+
+  return (
+    <View style={si.wrap}>
+      {STEPS.map((label, i) => {
+        const done = i < activeIdx;
+        const active = i === activeIdx;
+        const isDanger = phase === 'slowdown' || phase === 'stopped';
+
+        const dotBg = done
+          ? (isDanger ? T.okBg : T.okBg)
+          : active
+          ? (isDanger ? T.errBg : T.warnBg)
+          : T.fill;
+
+        const dotColor = done
+          ? T.ok
+          : active
+          ? (isDanger ? T.err : T.warn)
+          : T.fillMed;
+
+        const lineFilled = i < activeIdx;
+        const lineColor = lineFilled
+          ? (isDanger ? T.err : T.ok)
+          : T.border;
+
+        return (
+          <View key={label} style={si.item}>
+            {/* 앞 연결선 */}
+            {i > 0 && (
+              <View style={[si.line, { backgroundColor: lineColor }]} />
+            )}
+            <View style={si.dotWrap}>
+              <View style={[si.dot, { backgroundColor: dotBg }]}>
+                {done ? (
+                  <Text style={[si.check, { color: isDanger ? T.err : T.ok }]}>✓</Text>
+                ) : (
+                  <View style={[si.inner, { backgroundColor: dotColor }]} />
+                )}
+              </View>
+              <Text style={[
+                si.label,
+                active && { color: isDanger ? T.err : T.warn, fontWeight: '600' },
+                done && { color: T.textMuted },
+              ]}>
+                {label}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const si = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: 16, paddingVertical: 14,
+    backgroundColor: T.bg, borderBottomWidth: 1, borderBottomColor: T.border,
+  },
+  item: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  line: { flex: 1, height: 2, marginBottom: 14 },
+  dotWrap: { alignItems: 'center', gap: 4 },
+  dot: {
+    width: 22, height: 22, borderRadius: 11,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  inner: { width: 8, height: 8, borderRadius: 4 },
+  check: { fontSize: 12, fontWeight: '700' },
+  label: { fontSize: 9, color: T.textMuted, textAlign: 'center', width: 44 },
+});
+
+// ─── 경고 배너 ────────────────────────────────────────────
+function WarningBanner({ phase, countdown, cdProgress }: {
+  phase: Phase; countdown: number; cdProgress: Animated.Value;
+}) {
+  const isDanger = phase === 'slowdown' || phase === 'stopped';
+  const bg = isDanger ? T.errBg : T.warnBg;
+  const borderColor = isDanger ? 'rgba(198,40,40,0.2)' : 'rgba(230,81,0,0.2)';
+  const textColor = isDanger ? T.err : T.warn;
+
+  return (
+    <View style={[wb.wrap, { backgroundColor: bg, borderBottomColor: borderColor }]}>
+      <View style={wb.row}>
+        <View style={[wb.iconBox, { backgroundColor: isDanger ? 'rgba(198,40,40,0.12)' : 'rgba(230,81,0,0.12)' }]}>
+          <Text style={{ fontSize: 16 }}>⚠</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[wb.title, { color: textColor }]}>{WARNING_REASON}</Text>
+          <Text style={[wb.sub, { color: textColor }]}>
+            {phase === 'stopped'
+              ? '완전 정지됨 — 1인 탑승 후 재시작하세요'
+              : '단독 탑승 확인 시 자동 해제'}
+          </Text>
+        </View>
+        {/* 카운트다운 or 속도 */}
+        {phase === 'remeasure' ? (
+          <View style={{ alignItems: 'center' }}>
+            <Text style={[wb.bigNum, { color: textColor }]}>{countdown}</Text>
+            <Text style={[wb.bigSub, { color: textColor }]}>sec</Text>
+          </View>
+        ) : phase === 'slowdown' || phase === 'stopped' ? (
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={[wb.bigNum, { color: textColor, fontSize: 18 }]} id="speed-text" />
+            <Text style={[wb.bigSub, { color: textColor }]}>현재 속도</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* 프로그레스 바 */}
+      {phase === 'remeasure' && (
+        <View style={wb.barBg}>
+          <Animated.View style={[
+            wb.barFill,
+            { backgroundColor: textColor },
+            {
+              width: cdProgress.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['0%', '100%'],
+              }),
+            },
+          ]} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+const wb = StyleSheet.create({
+  wrap: { borderBottomWidth: 1, padding: 12, paddingHorizontal: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  iconBox: {
+    width: 32, height: 32, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  title: { fontSize: 13, fontWeight: '700' },
+  sub: { fontSize: 11, opacity: 0.8, marginTop: 2 },
+  bigNum: { fontSize: 24, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  bigSub: { fontSize: 10, opacity: 0.75 },
+  barBg: { height: 4, backgroundColor: 'rgba(0,0,0,0.08)', borderRadius: 2 },
+  barFill: { height: 4, borderRadius: 2 },
+});
+
+// ─── 감속 패널 ────────────────────────────────────────────
+function SlowdownPanel({ speed }: { speed: number }) {
+  const pct = (speed / MAX_SPEED * 100).toFixed(0);
+  return (
+    <View style={sp.wrap}>
+      <View style={sp.row}>
+        <Text style={sp.label}>📉  완전 정지까지 감속 중</Text>
+        <Text style={sp.speed}>{speed} <Text style={{ fontSize: 12 }}>km/h</Text></Text>
+      </View>
+      <View style={sp.barBg}>
+        <View style={[sp.barFill, { width: `${pct}%` }]} />
+      </View>
+    </View>
+  );
+}
+
+const sp = StyleSheet.create({
+  wrap: {
+    backgroundColor: T.errBg, borderBottomWidth: 1,
+    borderBottomColor: 'rgba(198,40,40,0.2)',
+    padding: 12, paddingHorizontal: 16,
+  },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  label: { fontSize: 12, color: T.err },
+  speed: { fontSize: 20, fontWeight: '700', color: T.err, fontVariant: ['tabular-nums'] },
+  barBg: { height: 6, backgroundColor: 'rgba(198,40,40,0.15)', borderRadius: 3 },
+  barFill: { height: 6, backgroundColor: T.err, borderRadius: 3 },
+});
+
+// ─── 메인 화면 ────────────────────────────────────────────
+export default function MonitoringScreen() {
+  const [elapsed, setElapsed] = useState(0);
+  const [phase, setPhase] = useState<Phase>('normal');
+  const [countdown, setCountdown] = useState(REMEASURE_SEC);
+  const [speed, setSpeed] = useState(MAX_SPEED);
+  const cdProgress = useRef(new Animated.Value(1)).current;
+  const sessionId = 5;
+
+  // 라이딩 타이머
+  useEffect(() => {
+    const t = setInterval(() => setElapsed(e => e + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // 재측정 카운트다운
+  useEffect(() => {
+    if (phase !== 'remeasure') return;
+    setCountdown(REMEASURE_SEC);
+
+    // 프로그레스 바 애니메이션
+    cdProgress.setValue(1);
+    Animated.timing(cdProgress, {
+      toValue: 0,
+      duration: REMEASURE_SEC * 1000,
+      useNativeDriver: false,
+    }).start();
+
+    let cd = REMEASURE_SEC;
+    const t = setInterval(() => {
+      cd--;
+      setCountdown(cd);
+      if (cd <= 0) {
+        clearInterval(t);
+        setPhase('slowdown');
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  // 속도 감속
+  useEffect(() => {
+    if (phase !== 'slowdown') return;
+    setSpeed(MAX_SPEED);
+    let spd = MAX_SPEED;
+    const t = setInterval(() => {
+      spd = Math.max(0, spd - 2);
+      setSpeed(spd);
+      if (spd <= 0) {
+        clearInterval(t);
+        setPhase('stopped');
+      }
+    }, 500);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  const fmt = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+  const handleReturn = () => {
+    Alert.alert('라이딩 종료', '반납하시겠습니까?', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '반납', style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiCall('POST', '/session/end', {
+              session_id: sessionId,
+              ended_at: new Date().toISOString(),
+              warning_count: phase !== 'normal' ? 1 : 0,
+            });
+          } catch { }
+          router.replace('/return-complete');
+        },
+      },
+    ]);
+  };
+
+  // 상태 뱃지
+  const badgeLabel = {
+    normal: '주행 중',
+    remeasure: '재측정 중',
+    slowdown: '감속 중',
+    stopped: '정지',
+  }[phase];
+
+  const badgeStatus = {
+    normal: 'ok',
+    remeasure: 'warn',
+    slowdown: 'err',
+    stopped: 'err',
+  }[phase];
+
+  // 센서 상태
+  const sensors: SensorRow[] = [
+    { label: '가스 센서 (알코올)', status: 'ok', value: '0.02 ppm' },
+    {
+      label: '탑승 인원 감지',
+      status: phase === 'normal' ? 'ok' : 'warn',
+      value: phase === 'normal' ? '1명' : '2명 감지',
+    },
+    { label: 'GPS 위치', status: 'ok', value: '신호 양호' },
+    { label: 'STM32 컨트롤러', status: 'info', value: '연결됨' },
+    { label: 'Raspberry Pi', status: 'info', value: '192.168.4.1' },
+  ];
+
+  return (
+    <View style={{ flex: 1, backgroundColor: T.bgAlt }}>
+
+      {/* ── 헤더 ── */}
+      <View style={s.header}>
+        <View>
+          <Text style={s.headerLabel}>스쿠터 ID</Text>
+          <Text style={s.headerId}>KICK-A23F</Text>
+        </View>
+        <WFBadge label={badgeLabel} status={badgeStatus as any} />
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={s.headerLabel}>라이딩 시간</Text>
+          <Text style={s.timer}>{fmt(elapsed)}</Text>
+        </View>
+      </View>
+
+      {/* ── 경고 배너 (경고 상태일 때만) ── */}
+      {phase !== 'normal' && (
+        <WarningBanner phase={phase} countdown={countdown} cdProgress={cdProgress} />
+      )}
+
+      {/* ── 단계 인디케이터 (경고 상태일 때만) ── */}
+      {phase !== 'normal' && (
+        <StepIndicator phase={phase} />
+      )}
+
+      {/* ── 감속 패널 (감속/정지 상태일 때만) ── */}
+      {(phase === 'slowdown' || phase === 'stopped') && (
+        <SlowdownPanel speed={speed} />
+      )}
+
+      <ScrollView contentContainerStyle={s.content}>
+
+        {/* 실시간 데이터 */}
+        <View style={s.card}>
+          <Text style={s.cardMeta}>실시간 데이터</Text>
+          <View style={s.statRow}>
+            <View style={s.stat}>
+              <Text style={s.statVal}>{fmt(elapsed)}</Text>
+              <Text style={s.statLabel}>운행 시간</Text>
+            </View>
+            <View style={s.statDivider} />
+            <View style={s.stat}>
+              <Text style={[s.statVal, phase !== 'normal' && { color: T.warn }]}>
+                {phase !== 'normal' ? '1' : '0'}
+              </Text>
+              <Text style={s.statLabel}>경고 발생 횟수</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* 추가 구현 예정 */}
+        <View style={[s.card, { backgroundColor: T.bgAlt }]}>
+          <Text style={s.cardMeta}>추후 구현 예정</Text>
+          <View style={s.statRow}>
+            {['현재 속도', '이동 거리', '배터리'].map(l => (
+              <View key={l} style={s.stat}>
+                <Text style={[s.statVal, { color: T.textMuted }]}>-</Text>
+                <Text style={s.statLabel}>{l}</Text>
+                <View style={s.unimplBadge}>
+                  <Text style={s.unimplText}>미구현</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* 센서 상태 */}
+        <View style={s.card}>
+          <Text style={s.cardMeta}>센서 상태</Text>
+          {sensors.map((row, i) => (
+            <View key={row.label} style={[
+              s.sensorRow,
+              i === sensors.length - 1 && { borderBottomWidth: 0 },
+            ]}>
+              <WFBadge
+                label={row.status === 'ok' ? '정상' : row.status === 'warn' ? '경고' : '연결됨'}
+                status={row.status === 'err' ? 'err' : row.status}
+              />
+              <Text style={s.sensorLabel}>{row.label}</Text>
+              <Text style={[
+                s.sensorVal,
+                row.status === 'warn' && { color: T.warn },
+              ]}>{row.value}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* mock 경고 트리거 버튼 */}
+        {phase === 'normal' && (
+          <TouchableOpacity style={s.testBtn} onPress={() => setPhase('remeasure')}>
+            <Text style={s.testBtnText}>⚠  경고 테스트 (mock)</Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={{ height: 90 }} />
+      </ScrollView>
+
+      {/* ── 반납 버튼 ── */}
+      <View style={s.returnWrap}>
+        <TouchableOpacity style={s.returnBtn} onPress={handleReturn}>
+          <Text style={s.returnBtnText}>라이딩 종료 (반납)</Text>
+        </TouchableOpacity>
+      </View>
+
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 16, paddingTop: 56,
+    backgroundColor: T.bg, borderBottomWidth: 1, borderBottomColor: T.border,
+  },
+  headerLabel: { fontSize: 11, color: T.textMuted },
+  headerId: { fontSize: 16, fontWeight: '700', color: T.text },
+  timer: { fontSize: 22, fontWeight: '700', color: T.text, fontVariant: ['tabular-nums'] },
+
+  content: { padding: 16, gap: 12 },
+
+  card: {
+    backgroundColor: T.bg, borderWidth: 1, borderColor: T.border,
+    borderRadius: 16, padding: 14,
+  },
+  cardMeta: {
+    fontSize: 10, fontWeight: '700', color: T.textMuted,
+    letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10,
+  },
+  statRow: { flexDirection: 'row' },
+  stat: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 4 },
+  statVal: { fontSize: 24, fontWeight: '700', color: T.text, fontVariant: ['tabular-nums'] },
+  statLabel: { fontSize: 11, color: T.textMuted },
+  statDivider: { width: 1, backgroundColor: T.border },
+  unimplBadge: {
+    backgroundColor: T.fill, borderRadius: 4,
+    paddingHorizontal: 5, paddingVertical: 2, marginTop: 2,
+  },
+  unimplText: { fontSize: 9, color: T.textMuted },
+
+  sensorRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: T.border,
+  },
+  sensorLabel: { flex: 1, fontSize: 13, color: T.text },
+  sensorVal: { fontSize: 12, color: T.textSub },
+
+  testBtn: {
+    height: 44, backgroundColor: T.warnBg,
+    borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+  },
+  testBtnText: { fontSize: 13, fontWeight: '600', color: T.warn },
+
+  returnWrap: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    padding: 16, paddingBottom: 32,
+    backgroundColor: T.bg, borderTopWidth: 1, borderTopColor: T.border,
+  },
+  returnBtn: {
+    height: 48, backgroundColor: T.err,
+    borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+  },
+  returnBtnText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
+});
