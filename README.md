@@ -167,7 +167,7 @@ eas build --profile development --platform android
 
 | 항목 | 값 |
 |------|-----|
-| 이름 | 최세연 |
+| 이름 | 최세은 |
 | 이메일 | user@example.com |
 | 면허번호 | 12-34-567890-01 |
 
