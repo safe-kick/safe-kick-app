@@ -146,6 +146,28 @@ docker compose down
 
 ---
 
+## 💻 로컬에서 직접 실행 (Docker 없이)
+
+Node.js가 이미 설치되어 있다면 Docker 없이 바로 실행할 수 있어요.
+
+### 사전 준비
+
+- Node.js v20.20.2 (https://nodejs.org/en/download)
+- Git
+
+### 실행
+
+```bash
+git clone https://github.com/safe-kick/safe-kick-app.git
+cd safe-kick-app
+npm install
+npx expo start
+```
+
+브라우저에서 w 키를 누르면 웹으로 바로 확인할 수 있어요.
+
+---
+
 ## 🌐 서버 연결 (선택)
 
 서버가 없어도 **mock 데이터로 자동 동작**해요.
