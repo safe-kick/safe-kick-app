@@ -54,51 +54,91 @@ safe-kick-app/
 
 ---
 
-## ⚙️ 개발 환경 세팅
-
-### 사전 준비
-
-- Docker & Docker Compose
-- Git
+## ⚙️ 개발 환경 세팅 (Windows)
 
 > Node.js는 Docker 컨테이너 안에서 v20.20.2로 고정 실행되므로 로컬 설치 불필요합니다.
 
+### 1단계 — WSL2 설치
+
+PowerShell을 **관리자 권한**으로 실행 후 아래 명령어 입력:
+
+```powershell
+wsl --install
+```
+
+설치 완료 후 **PC 재시작** → Ubuntu 실행 → username / password 설정
+
 ---
 
-### 🐳 Docker로 실행 (권장)
+### 2단계 — Docker Desktop 설치
 
-#### 1. 레포 클론
+https://www.docker.com/products/docker-desktop/ 접속 → 다운로드 → 설치
+
+설치 후 **WSL 연동 설정 필수:**
+
+```
+1. Docker Desktop 실행
+2. 우측 상단 톱니바퀴(⚙️) → Settings
+3. Resources → WSL Integration
+4. "Enable integration with my default WSL distro" 토글 ON
+5. 아래 Ubuntu 이름 옆 토글도 ON
+6. Apply & Restart 클릭
+```
+
+---
+
+### 3단계 — PowerShell 관리자 권한으로 재시작
+
+```
+Windows 시작 → PowerShell 검색 → 우클릭 → 관리자 권한으로 실행
+```
+
+WSL로 진입:
+
+```powershell
+wsl
+```
+
+---
+
+### 4단계 — 프로젝트 폴더로 이동
+
+WSL 터미널에서 /mnt/c/... 경로로 Windows 드라이브 접근:
+
+```bash
+# 예시: C:\Users\사용자이름\Desktop\safe-kick\safe-kick-app 인 경우
+cd /mnt/c/Users/사용자이름/Desktop/safe-kick/safe-kick-app
+```
+
+---
+
+### 5단계 — 레포 클론
 
 ```bash
 git clone https://github.com/safe-kick/safe-kick-app.git
 cd safe-kick-app
 ```
 
-#### 2. 이미지 빌드 (최초 1회, 3~5분 소요)
+---
+
+### 6단계 — Docker로 실행
 
 ```bash
+# 이미지 빌드 (최초 1회, 3~5분 소요)
 docker compose build
-```
 
-#### 3. 실행
-
-```bash
+# 실행
 docker compose up -d
-```
 
-#### 4. 정상 동작 확인
-
-```bash
-# Node 버전 확인
-docker exec app_metro node -v
-# → v20.20.2
-
-# 로그 확인
+# 로그 확인 (Metro Bundler 시작 확인)
 docker logs -f app_metro
-# → Metro waiting on exp://... 나오면 성공
 ```
 
-#### 5. 종료
+브라우저에서 http://localhost:8081 접속하면 앱 확인 가능해요.
+
+---
+
+### 종료
 
 ```bash
 docker compose down
@@ -106,13 +146,16 @@ docker compose down
 
 ---
 
-### 💻 로컬에서 직접 실행 (Docker 없이)
+## 💻 로컬에서 직접 실행 (Docker 없이)
 
-#### 사전 준비
+Node.js가 이미 설치되어 있다면 Docker 없이 바로 실행할 수 있어요.
 
-- Node.js v20.20.2
+### 사전 준비
+
+- Node.js v20.20.2 (https://nodejs.org/en/download)
 - Git
-- WSL2 (Windows) 또는 macOS 터미널
+
+### 실행
 
 ```bash
 git clone https://github.com/safe-kick/safe-kick-app.git
@@ -121,18 +164,18 @@ npm install
 npx expo start
 ```
 
-브라우저에서 `w` 키를 누르면 웹으로 바로 확인할 수 있어요.
+브라우저에서 w 키를 누르면 웹으로 바로 확인할 수 있어요.
 
 ---
 
 ## 🌐 서버 연결 (선택)
 
-서버가 없어도 **mock 데이터로 자동 동작**해요.  
+서버가 없어도 **mock 데이터로 자동 동작**해요.
 서버를 켜면 자동으로 실제 서버 데이터를 사용해요.
 
 ### 서버 실행 방법
 
-[safe-kick-server](https://github.com/safe-kick/safe-kick-server) 레포를 클론하고 아래 명령어를 실행하세요.
+safe-kick-server 레포를 클론하고 아래 명령어를 실행하세요.
 
 ```bash
 git clone https://github.com/safe-kick/safe-kick-server.git
@@ -149,7 +192,7 @@ http://localhost/health
 
 ### 서버 URL 변경 (실제 폰으로 테스트할 때)
 
-`src/constants/api.ts` 파일에서 PC의 실제 IP로 변경하세요.
+src/constants/api.ts 파일에서 PC의 실제 IP로 변경하세요.
 
 ```ts
 // 웹 브라우저 테스트
@@ -184,7 +227,7 @@ eas build --profile development --platform android
 
 ## 🔄 mock vs 서버 자동 전환
 
-`src/utils/api.ts`가 자동으로 처리해요.
+src/utils/api.ts가 자동으로 처리해요.
 
 ```
 앱 실행

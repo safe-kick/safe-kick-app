@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Animated,
+  Alert, Animated, Platform,
   ScrollView,
   StyleSheet,
   Text, TouchableOpacity,
@@ -30,49 +30,77 @@ const STEPS = ['이상 감지', '재측정 중', '감속 중', '정지'];
 
 function StepIndicator({ phase }: { phase: Phase }) {
   const activeIdx = { normal: -1, remeasure: 1, slowdown: 2, stopped: 3 }[phase];
+  const isDanger = phase === 'slowdown' || phase === 'stopped';
+  const isStopped = phase === 'stopped';
+
+  const accentColor = isDanger ? T.err : T.warn;
+  const accentBg = isDanger ? T.errBg : T.warnBg;
+
+  // 깜빡임 애니메이션 (재측정 중, 감속 중 active dot용)
+  const blink = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (phase === 'remeasure' || phase === 'slowdown') {
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(blink, { toValue: 0.2, duration: 500, useNativeDriver: true }),
+          Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: true }),
+        ])
+      );
+      anim.start();
+      return () => anim.stop();
+    } else {
+      blink.setValue(1);
+    }
+  }, [phase]);
 
   return (
     <View style={si.wrap}>
       {STEPS.map((label, i) => {
         const done = i < activeIdx;
         const active = i === activeIdx;
-        const isDanger = phase === 'slowdown' || phase === 'stopped';
 
-        const dotBg = done
-          ? (isDanger ? T.okBg : T.okBg)
-          : active
-          ? (isDanger ? T.errBg : T.warnBg)
-          : T.fill;
+        const dotBg = (done || active) ? accentBg : T.fill;
+        const dotColor = (done || active) ? accentColor : T.fillMed;
 
-        const dotColor = done
-          ? T.ok
-          : active
-          ? (isDanger ? T.err : T.warn)
-          : T.fillMed;
+        // 라인: active dot 앞까지 채움, stopped면 전부 채움
+        const lineFilled = isStopped ? true : i <= activeIdx;
+        const lineColor = lineFilled ? accentColor : T.border;
 
-        const lineFilled = i < activeIdx;
-        const lineColor = lineFilled
-          ? (isDanger ? T.err : T.ok)
-          : T.border;
+        const itemStyle = i === 0
+          ? { flexDirection: 'row' as const, alignItems: 'center' as const }
+          : si.item;
+
+        // active dot — 재측정/감속 중이면 깜빡이는 동그라미
+        const DotContent = () => {
+          if (done || (active && isStopped)) {
+            // done이거나 정지 active → 체크
+            return <Text style={[si.check, { color: accentColor }]}>✓</Text>;
+          }
+          if (active && (phase === 'remeasure' || phase === 'slowdown')) {
+            // 재측정/감속 active → 깜빡이는 동그라미
+            return (
+              <Animated.View style={[si.inner, { backgroundColor: dotColor, opacity: blink }]} />
+            );
+          }
+          // pending → 회색 동그라미
+          return <View style={[si.inner, { backgroundColor: dotColor }]} />;
+        };
 
         return (
-          <View key={label} style={si.item}>
+          <View key={label} style={itemStyle}>
             {/* 앞 연결선 */}
             {i > 0 && (
               <View style={[si.line, { backgroundColor: lineColor }]} />
             )}
             <View style={si.dotWrap}>
               <View style={[si.dot, { backgroundColor: dotBg }]}>
-                {done ? (
-                  <Text style={[si.check, { color: isDanger ? T.err : T.ok }]}>✓</Text>
-                ) : (
-                  <View style={[si.inner, { backgroundColor: dotColor }]} />
-                )}
+                <DotContent />
               </View>
               <Text style={[
                 si.label,
-                active && { color: isDanger ? T.err : T.warn, fontWeight: '600' },
-                done && { color: T.textMuted },
+                (done || active) && { color: accentColor },
+                active && { fontWeight: '600' },
+                !done && !active && { color: T.textMuted },
               ]}>
                 {label}
               </Text>
@@ -261,23 +289,28 @@ export default function MonitoringScreen() {
   const fmt = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
+  const doReturn = async () => {
+    try {
+      await apiCall('POST', '/session/end', {
+        session_id: sessionId,
+        ended_at: new Date().toISOString(),
+        warning_count: phase !== 'normal' ? 1 : 0,
+      });
+    } catch { }
+    router.replace('/return-complete');
+  };
+
   const handleReturn = () => {
-    Alert.alert('라이딩 종료', '반납하시겠습니까?', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '반납', style: 'destructive',
-        onPress: async () => {
-          try {
-            await apiCall('POST', '/session/end', {
-              session_id: sessionId,
-              ended_at: new Date().toISOString(),
-              warning_count: phase !== 'normal' ? 1 : 0,
-            });
-          } catch { }
-          router.replace('/return-complete');
-        },
-      },
-    ]);
+    // 웹에서는 Alert이 동작 안 해서 window.confirm 사용
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('라이딩을 종료하고 반납하시겠습니까?');
+      if (confirmed) doReturn();
+    } else {
+      Alert.alert('라이딩 종료', '반납하시겠습니까?', [
+        { text: '취소', style: 'cancel' },
+        { text: '반납', style: 'destructive', onPress: doReturn },
+      ]);
+    }
   };
 
   // 상태 뱃지
