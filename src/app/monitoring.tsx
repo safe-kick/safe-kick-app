@@ -30,34 +30,61 @@ const STEPS = ['이상 감지', '재측정 중', '감속 중', '정지'];
 
 function StepIndicator({ phase }: { phase: Phase }) {
   const activeIdx = { normal: -1, remeasure: 1, slowdown: 2, stopped: 3 }[phase];
+  const isDanger = phase === 'slowdown' || phase === 'stopped';
+  const isStopped = phase === 'stopped';
+
+  const accentColor = isDanger ? T.err : T.warn;
+  const accentBg = isDanger ? T.errBg : T.warnBg;
+
+  // 깜빡임 애니메이션 (재측정 중, 감속 중 active dot용)
+  const blink = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (phase === 'remeasure' || phase === 'slowdown') {
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(blink, { toValue: 0.2, duration: 500, useNativeDriver: true }),
+          Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: true }),
+        ])
+      );
+      anim.start();
+      return () => anim.stop();
+    } else {
+      blink.setValue(1);
+    }
+  }, [phase]);
 
   return (
     <View style={si.wrap}>
       {STEPS.map((label, i) => {
         const done = i < activeIdx;
         const active = i === activeIdx;
-        const isDanger = phase === 'slowdown' || phase === 'stopped';
 
-        const dotBg = done
-          ? (isDanger ? T.okBg : T.okBg)
-          : active
-          ? (isDanger ? T.errBg : T.warnBg)
-          : T.fill;
+        const dotBg = (done || active) ? accentBg : T.fill;
+        const dotColor = (done || active) ? accentColor : T.fillMed;
 
-        const dotColor = done
-          ? T.ok
-          : active
-          ? (isDanger ? T.err : T.warn)
-          : T.fillMed;
+        // 라인: active dot 앞까지 채움, stopped면 전부 채움
+        const lineFilled = isStopped ? true : i <= activeIdx;
+        const lineColor = lineFilled ? accentColor : T.border;
 
-        const lineFilled = i < activeIdx;
-        const lineColor = lineFilled
-          ? (isDanger ? T.err : T.ok)
-          : T.border;
-
-        const itemStyle = i === 0 
-          ? { flexDirection: 'row' as const, alignItems: 'center' as const }  // flex 없이
+        const itemStyle = i === 0
+          ? { flexDirection: 'row' as const, alignItems: 'center' as const }
           : si.item;
+
+        // active dot — 재측정/감속 중이면 깜빡이는 동그라미
+        const DotContent = () => {
+          if (done || (active && isStopped)) {
+            // done이거나 정지 active → 체크
+            return <Text style={[si.check, { color: accentColor }]}>✓</Text>;
+          }
+          if (active && (phase === 'remeasure' || phase === 'slowdown')) {
+            // 재측정/감속 active → 깜빡이는 동그라미
+            return (
+              <Animated.View style={[si.inner, { backgroundColor: dotColor, opacity: blink }]} />
+            );
+          }
+          // pending → 회색 동그라미
+          return <View style={[si.inner, { backgroundColor: dotColor }]} />;
+        };
 
         return (
           <View key={label} style={itemStyle}>
@@ -67,16 +94,13 @@ function StepIndicator({ phase }: { phase: Phase }) {
             )}
             <View style={si.dotWrap}>
               <View style={[si.dot, { backgroundColor: dotBg }]}>
-                {done ? (
-                  <Text style={[si.check, { color: isDanger ? T.err : T.ok }]}>✓</Text>
-                ) : (
-                  <View style={[si.inner, { backgroundColor: dotColor }]} />
-                )}
+                <DotContent />
               </View>
               <Text style={[
                 si.label,
-                active && { color: isDanger ? T.err : T.warn, fontWeight: '600' },
-                done && { color: T.textMuted },
+                (done || active) && { color: accentColor },
+                active && { fontWeight: '600' },
+                !done && !active && { color: T.textMuted },
               ]}>
                 {label}
               </Text>
