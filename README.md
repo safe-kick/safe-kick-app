@@ -45,6 +45,8 @@ safe-kick-app/
 │       ├── auth.ts           # 인증 mock 데이터
 │       └── data.ts           # 기타 mock 데이터
 ├── assets/
+├── Dockerfile
+├── docker-compose.yml
 ├── app.json
 ├── package.json
 └── README.md
@@ -56,26 +58,66 @@ safe-kick-app/
 
 ### 사전 준비
 
-- Node.js 18 이상
+- Docker & Docker Compose
 - Git
-- WSL2 (Windows) 또는 macOS 터미널
 
-### 1. 레포 클론
+> Node.js는 Docker 컨테이너 안에서 v20.20.2로 고정 실행되므로 로컬 설치 불필요합니다.
+
+---
+
+### 🐳 Docker로 실행 (권장)
+
+#### 1. 레포 클론
 
 ```bash
 git clone https://github.com/safe-kick/safe-kick-app.git
 cd safe-kick-app
 ```
 
-### 2. 패키지 설치
+#### 2. 이미지 빌드 (최초 1회, 3~5분 소요)
 
 ```bash
-npm install
+docker compose build
 ```
 
-### 3. 앱 실행
+#### 3. 실행
 
 ```bash
+docker compose up -d
+```
+
+#### 4. 정상 동작 확인
+
+```bash
+# Node 버전 확인
+docker exec app_metro node -v
+# → v20.20.2
+
+# 로그 확인
+docker logs -f app_metro
+# → Metro waiting on exp://... 나오면 성공
+```
+
+#### 5. 종료
+
+```bash
+docker compose down
+```
+
+---
+
+### 💻 로컬에서 직접 실행 (Docker 없이)
+
+#### 사전 준비
+
+- Node.js v20.20.2
+- Git
+- WSL2 (Windows) 또는 macOS 터미널
+
+```bash
+git clone https://github.com/safe-kick/safe-kick-app.git
+cd safe-kick-app
+npm install
 npx expo start
 ```
 
@@ -186,6 +228,12 @@ find . -name "*.Identifier" -delete
 
 # 캐시 초기화
 npx expo start --clear
+
+# Docker 컨테이너 재시작
+docker compose restart
+
+# Docker 로그 실시간 확인
+docker logs -f app_metro
 ```
 
 ---
