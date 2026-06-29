@@ -1,11 +1,14 @@
+import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, Alert, Animated, Platform,
+  Alert, Animated, Platform,
+  ScrollView,
+  StyleSheet,
+  Text, TouchableOpacity,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
-import { T } from '../constants/colors';
 import { WFBadge } from '../components/ui';
+import { T } from '../constants/colors';
 import { apiCall } from '../utils/api';
 
 // ─── 타입 ────────────────────────────────────────────────
@@ -52,8 +55,12 @@ function StepIndicator({ phase }: { phase: Phase }) {
           ? (isDanger ? T.err : T.ok)
           : T.border;
 
+        const itemStyle = i === 0 
+          ? { flexDirection: 'row' as const, alignItems: 'center' as const }  // flex 없이
+          : si.item;
+
         return (
-          <View key={label} style={si.item}>
+          <View key={label} style={itemStyle}>
             {/* 앞 연결선 */}
             {i > 0 && (
               <View style={[si.line, { backgroundColor: lineColor }]} />
