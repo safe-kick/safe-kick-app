@@ -1,14 +1,11 @@
-import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Animated,
-  ScrollView,
-  StyleSheet,
-  Text, TouchableOpacity,
-  View,
+  View, Text, TouchableOpacity, StyleSheet,
+  ScrollView, Alert, Animated, Platform,
 } from 'react-native';
-import { WFBadge } from '../components/ui';
+import { router } from 'expo-router';
 import { T } from '../constants/colors';
+import { WFBadge } from '../components/ui';
 import { apiCall } from '../utils/api';
 
 // ─── 타입 ────────────────────────────────────────────────
@@ -261,23 +258,28 @@ export default function MonitoringScreen() {
   const fmt = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
+  const doReturn = async () => {
+    try {
+      await apiCall('POST', '/session/end', {
+        session_id: sessionId,
+        ended_at: new Date().toISOString(),
+        warning_count: phase !== 'normal' ? 1 : 0,
+      });
+    } catch { }
+    router.replace('/return-complete');
+  };
+
   const handleReturn = () => {
-    Alert.alert('라이딩 종료', '반납하시겠습니까?', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '반납', style: 'destructive',
-        onPress: async () => {
-          try {
-            await apiCall('POST', '/session/end', {
-              session_id: sessionId,
-              ended_at: new Date().toISOString(),
-              warning_count: phase !== 'normal' ? 1 : 0,
-            });
-          } catch { }
-          router.replace('/return-complete');
-        },
-      },
-    ]);
+    // 웹에서는 Alert이 동작 안 해서 window.confirm 사용
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('라이딩을 종료하고 반납하시겠습니까?');
+      if (confirmed) doReturn();
+    } else {
+      Alert.alert('라이딩 종료', '반납하시겠습니까?', [
+        { text: '취소', style: 'cancel' },
+        { text: '반납', style: 'destructive', onPress: doReturn },
+      ]);
+    }
   };
 
   // 상태 뱃지
