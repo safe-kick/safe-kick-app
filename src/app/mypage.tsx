@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { WFBadge, WFCard } from '../components/ui';
 import { T } from '../constants/colors';
-import { WFCard, WFBadge } from '../components/ui';
 import { apiCall } from '../utils/api';
 
 function ListItem({ icon, label, sub, danger, right = true }: {
@@ -38,18 +38,21 @@ function dur(a: string, b: string) {
   return `${Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000)}분`;
 }
 
+const doLogout = async () => {
+  await AsyncStorage.clear();
+  router.replace('/login');
+};
+
 export default function MyPageScreen() {
   const [user, setUser] = useState<any>(null);
   const [rides, setRides] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     try {
-      // GET /users/me + GET /rides 병렬 호출
+      // GET /users/me + GET /rides — 서버 없으면 mock 자동 사용
       const [userRes, ridesRes] = await Promise.all([
         apiCall('GET', '/users/me'),
         apiCall('GET', '/rides'),
@@ -57,7 +60,7 @@ export default function MyPageScreen() {
       setUser(userRes.data);
       setRides(ridesRes.data);
     } catch {
-      // 서버 실패 시 AsyncStorage에서 user 정보 fallback
+      // 완전 실패 시 AsyncStorage fallback
       const raw = await AsyncStorage.getItem('user').catch(() => null);
       if (raw) setUser(JSON.parse(raw));
     } finally {
@@ -66,13 +69,18 @@ export default function MyPageScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert('로그아웃', '계정에서 로그아웃하시겠습니까?', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '로그아웃', style: 'destructive',
-        onPress: async () => { await AsyncStorage.clear(); router.replace('/login'); },
-      },
-    ]);
+    // 웹(브라우저)과 네이티브(폰) 각각 다른 확인 방식 사용
+    if (Platform.OS === 'web') {
+      // 웹 — window.confirm 사용 (Alert이 웹에서 동작 안 하는 경우 대비)
+      const confirmed = window.confirm('로그아웃 하시겠습니까?');
+      if (confirmed) doLogout();
+    } else {
+      // 네이티브 — Alert 사용
+      Alert.alert('로그아웃', '계정에서 로그아웃하시겠습니까?', [
+        { text: '취소', style: 'cancel' },
+        { text: '로그아웃', style: 'destructive', onPress: doLogout },
+      ]);
+    }
   };
 
   if (loading) return (
@@ -83,6 +91,7 @@ export default function MyPageScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: T.bgAlt }}>
+      {/* TopBar — 뒤로가기 포함 */}
       <View style={s.topBar}>
         <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
           <Text style={s.backIcon}>‹</Text>
@@ -92,24 +101,28 @@ export default function MyPageScreen() {
       </View>
 
       <ScrollView>
+        {/* 프로필 */}
         <View style={s.profileSection}>
           <View style={s.profileRow}>
             <View style={s.avatar} />
             <View style={{ flex: 1 }}>
-              <Text style={s.name}>{user?.name ?? '-'}</Text>
-              <Text style={s.email}>{user?.email ?? '-'}</Text>
+              <Text style={s.name}>{user?.name ?? '최세은'}</Text>
+              <Text style={s.email}>{user?.email ?? 'user@example.com'}</Text>
             </View>
             <WFBadge label="인증 완료" status="ok" />
           </View>
         </View>
 
         <View style={s.body}>
+          {/* 면허증 */}
           {user?.license && (
             <>
               <Text style={s.sectionLabel}>등록된 면허증</Text>
               <WFCard style={{ marginBottom: 16 }}>
                 <View style={s.licenseRow}>
-                  <View style={s.licenseImg}><Text style={{ fontSize: 10, color: T.textMuted }}>면허증</Text></View>
+                  <View style={s.licenseImg}>
+                    <Text style={{ fontSize: 10, color: T.textMuted }}>면허증</Text>
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={s.licenseType}>2종 보통</Text>
                     <Text style={s.licenseNo}>{user.license.license_no}</Text>
@@ -126,6 +139,7 @@ export default function MyPageScreen() {
             </>
           )}
 
+          {/* 이용 내역 */}
           <Text style={s.sectionLabel}>최근 이용 내역</Text>
           {rides.length === 0 ? (
             <WFCard><Text style={s.emptyText}>이용 기록이 없습니다</Text></WFCard>
@@ -141,6 +155,7 @@ export default function MyPageScreen() {
             </WFCard>
           ))}
 
+          {/* 설정 */}
           <Text style={[s.sectionLabel, { marginTop: 8 }]}>설정</Text>
           <WFCard style={{ padding: 0, paddingHorizontal: 16, marginBottom: 12 }}>
             <ListItem icon="🔔" label="알림 설정" sub="푸시 알림 관리" />
