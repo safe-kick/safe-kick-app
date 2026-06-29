@@ -1,0 +1,13 @@
+services:
+  metro:
+    build: .
+    container_name: app_metro
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    ports:
+      - "8081:8081"
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped
