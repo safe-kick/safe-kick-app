@@ -1,12 +1,14 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ScrollView,
+  KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet,
+  Text, TextInput, TouchableOpacity,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { T } from '../constants/colors';
 import { TopBar } from '../components/ui';
+import { T } from '../constants/colors';
 import { apiCall } from '../utils/api';
 
 function ProgressDots({ total = 3, active = 0 }: { total?: number; active?: number }) {
@@ -38,6 +40,8 @@ export default function RegisterScreen() {
       // POST /auth/register
       const res = await apiCall('POST', '/auth/register', { name, email, phone, password });
       await AsyncStorage.setItem('token', res.data.token);
+      // 이름이 main/mypage에서 보이도록 user 정보도 저장
+      await AsyncStorage.setItem('user', JSON.stringify({ name, email }));
       router.push('/license-capture');
     } catch (e: any) {
       setError(e.message || '회원가입에 실패했습니다.');
