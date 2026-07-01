@@ -1,8 +1,43 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { T } from '../constants/colors';
 
 export default function LicenseCaptureScreen() {
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
+
+  // 네이티브 환경에서는 진입 시 후면 카메라 권한을 바로 요청
+  useEffect(() => {
+    if (Platform.OS !== 'web' && !permission?.granted) {
+      requestPermission();
+    }
+  }, []);
+
+  const handleCapture = async () => {
+    // 웹 또는 카메라 미준비 환경 — 촬영 없이 기존 mock 흐름 유지
+    if (Platform.OS === 'web' || !permission?.granted || !cameraRef.current) {
+      router.push('/license-confirm');
+      return;
+    }
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.8,
+        exif: false,
+      });
+      if (photo?.base64) {
+        // license-confirm에서 OCR 결과와 함께 서버 전송 시 사용
+        await AsyncStorage.setItem('license_image_base64', photo.base64);
+      }
+    } catch (e) {
+      // 촬영 실패해도 OCR mock 확인 화면으로는 진행
+    }
+    router.push('/license-confirm');
+  };
+
   return (
     <View style={s.container}>
       {/* 다크 TopBar */}
@@ -16,6 +51,10 @@ export default function LicenseCaptureScreen() {
 
       {/* 카메라 영역 */}
       <View style={s.cameraArea}>
+        {/* 실제 후면 카메라 — 네이티브 + 권한 허용 시에만 렌더, 웹은 기존 다크 배경 유지 */}
+        {Platform.OS !== 'web' && permission?.granted && (
+          <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+        )}
         {/* 가이드 프레임 */}
         <View style={s.frameWrap}>
           <View style={s.frame}>
@@ -33,20 +72,29 @@ export default function LicenseCaptureScreen() {
             <Text style={s.frameLabel}>license_card</Text>
           </View>
         </View>
-        <Text style={s.hint}>면허증을 안내선 안에 맞추세요</Text>
+        <Text style={s.hint}>
+          {Platform.OS !== 'web' && !permission?.granted
+            ? '카메라 권한이 필요합니다'
+            : '면허증을 안내선 안에 맞추세요'}
+        </Text>
       </View>
 
       {/* 촬영 하단 */}
       <View style={s.bottom}>
         <View style={s.controls}>
           <View style={s.controlPlaceholder} />
-          {/* 촬영 버튼 */}
-          <TouchableOpacity onPress={() => router.push('/license-confirm')} style={s.shutterOuter}>
+          {/* 촬영 버튼 — 권한 미허용이면 권한 요청, 허용되면 실제 촬영 */}
+          <TouchableOpacity
+            onPress={Platform.OS !== 'web' && !permission?.granted ? requestPermission : handleCapture}
+            style={s.shutterOuter}
+          >
             <View style={s.shutterInner} />
           </TouchableOpacity>
           <View style={s.controlPlaceholder} />
         </View>
-        <Text style={s.autoHint}>3초 후 자동 촬영됩니다</Text>
+        <Text style={s.autoHint}>
+          {Platform.OS !== 'web' && !permission?.granted ? '촬영 버튼을 눌러 권한을 허용하세요' : '촬영 버튼을 눌러 면허증을 찍어주세요'}
+        </Text>
       </View>
     </View>
   );

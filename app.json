@@ -8,7 +8,10 @@
     "scheme": "safekickapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSCameraUsageDescription": "QR 스캔, 본인 인증(셀피), 면허증 촬영을 위해 카메라가 필요합니다."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +21,10 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.safekickapp"
+      "package": "com.anonymous.safekickapp",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "output": "static",
@@ -35,11 +41,26 @@
             "imageWidth": 76
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "QR 스캔, 본인 인증(셀피), 면허증 촬영을 위해 카메라가 필요합니다.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "18ef9373-78a4-473f-9528-ebf2b1039a1f"
+      }
+    },
+    "owner": "cseun"
   }
 }
