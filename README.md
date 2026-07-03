@@ -207,21 +207,110 @@ export const API_BASE = 'http://192.168.x.x';
 
 ## 📲 실제 폰 테스트 (EAS Dev Build)
 
+### 개념 먼저 — Dev Build와 Metro 서버는 한 세트
+
+EAS Build로 만드는 APK는 카메라 권한 같은 네이티브 설정만 담긴 **빈 껍데기**예요.
+실제 화면(JS/TSX) 코드는 앱 실행 시 PC의 Metro 서버(`npx expo start`)에서 실시간으로 받아와요.
+
+```
+폰 (Dev Build 앱)  ←── 같은 WiFi ──→  PC (npx expo start)
+```
+
+따라서 EAS Build는 **최초 1회** (또는 네이티브 설정이 바뀔 때)만 하고,
+그 이후 매번 코드를 수정하고 테스트하는 과정은 전부 PC 로컬에서 이루어져요.
+
+> **웹 브라우저(`w` 키)에서는 카메라 권한 팝업이 뜨지 않습니다.**
+> 카메라(QR 스캔, 셀피, 면허증 촬영)는 실제 폰 테스트에서만 동작해요.
+> 웹에서는 mock 경로로 자동 폴백됩니다.
+
+---
+
+### Step 1 — app.json에 expo-camera 플러그인 확인
+
+카메라 권한이 빌드에 포함되려면 `app.json`의 `plugins`에 아래 항목이 있어야 해요.
+없으면 폰에서 카메라 권한 팝업이 아예 뜨지 않습니다.
+
+```json
+"plugins": [
+  "expo-router",
+  [
+    "expo-camera",
+    {
+      "cameraPermission": "QR 스캔, 본인 인증(셀피), 면허증 촬영을 위해 카메라가 필요합니다.",
+      "microphonePermission": false,
+      "recordAudioAndroid": false
+    }
+  ]
+]
+```
+
+---
+
+### Step 2 — EAS CLI 설치 및 빌드
+
+> **Android Studio 불필요** — `eas build`는 Expo 클라우드 서버에서 빌드됩니다.
+> PC에는 `eas-cli`만 있으면 돼요. Docker 컨테이너 안에서도, 호스트 터미널에서도 실행 가능해요.
+
 ```bash
-# EAS CLI 설치
+# Docker 컨테이너 안에서 실행하는 경우
+docker exec -it app_metro bash
+
+# ── 컨테이너 안 (또는 호스트 터미널) ──
+
+# EAS CLI 설치 (최초 1회)
 npm install -g eas-cli
 
-# 로그인
+# Expo 계정 로그인
 eas login
 
-# 초기화 (최초 1회)
+# 프로젝트 EAS 연결 (최초 1회)
 eas init
 
-# Android APK 빌드
+# Android APK 빌드 (5~20분 소요, 클라우드에서 진행)
 eas build --profile development --platform android
 ```
 
-빌드 완료 후 APK를 폰에 설치하면 실제 카메라, QR 스캔이 동작해요.
+> **⚠️ 빌드 완료 후 "Install and run on an emulator?" 질문이 뜨면 반드시 `N`을 선택하세요.**
+> `Y`를 선택하면 Android Studio가 없어서 `adb executable doesn't seem to work` 에러가 납니다.
+> 이 에러는 무시해도 됩니다 — 빌드(APK 생성) 자체는 이미 완료된 상태예요.
+
+---
+
+### Step 3 — APK 다운로드 및 폰에 설치
+
+빌드 완료 후 터미널에 다운로드 링크가 출력되거나, [expo.dev](https://expo.dev) 빌드 페이지에서 확인할 수 있어요.
+
+**설치 방법:**
+1. 폰 브라우저로 다운로드 링크 접속 또는 expo.dev 빌드 페이지의 QR 스캔
+2. APK 다운로드 → 설치
+3. 안드로이드가 "출처를 알 수 없는 앱" 경고를 띄우면 **허용** 클릭
+
+---
+
+### Step 4 — Metro 서버 실행 및 폰과 연결
+
+```bash
+# PC에서 (Docker 컨테이너 안 또는 로컬)
+npx expo start
+```
+
+1. 설치한 **Safe Kick Dev Build** 앱 실행
+2. 처음 실행하면 빈 화면이 뜨는 게 정상 — Metro 서버에 아직 연결 전
+3. 폰을 PC와 **같은 WiFi**에 연결한 뒤, 앱 화면에서:
+   - **Scan QR Code** 버튼으로 터미널에 뜬 QR 스캔 (가장 빠름)
+   - 또는 `exp://` 입력란에 터미널에 출력된 주소 직접 입력 후 **Connect**
+   - 또는 **Fetch development servers**로 자동 탐색
+
+---
+
+### 재빌드가 필요한 경우 vs 필요 없는 경우
+
+| 변경 내용 | 재빌드 필요? |
+|---|---|
+| 화면(.tsx) 코드/스타일 수정 | ❌ `npx expo start`로 즉시 반영 |
+| 순수 JS 라이브러리 추가 | ❌ 대부분 불필요 |
+| `app.json`의 `plugins` 추가/수정 | ✅ 필요 |
+| 네이티브 모듈이 포함된 패키지 신규 설치 | ✅ 필요 |
 
 ---
 
