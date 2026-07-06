@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiCall } from '../utils/api';
 import { T } from '../constants/colors';
 import { TopBar, WFCard, WFBadge } from '../components/ui';
 
@@ -16,11 +18,35 @@ const OCR_RESULT = [
 export default function LicenseConfirmScreen() {
   const [loading, setLoading] = useState(false);
 
+  const { name, email, password } = useLocalSearchParams<{
+    name: string;
+    email: string;
+    password: string;
+  }>();
+
   const handleConfirm = async () => {
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
-    setLoading(false);
-    router.replace('/main');
+
+  try {
+      const res = await apiCall('POST', '/auth/register', {
+        name,
+        email,
+        password,
+        license_no: '12-34-567890-01',
+        license_expires_at: '2030-01-01',
+        license_image: 'mock_license_image',
+      });
+
+      if (res?.data?.token) {
+        await AsyncStorage.setItem('token', res.data.token);
+      }
+
+      router.replace('/login');
+    } catch (e) {
+      console.log(e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

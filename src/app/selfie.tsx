@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { T } from '../constants/colors';
 import { TopBar, WFCard, WFBadge } from '../components/ui';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiCall } from '../utils/api';
 
 type Step = 'capture' | 'verifying' | 'success' | 'fail';
@@ -23,12 +24,23 @@ export default function SelfieScreen() {
   // 촬영된(또는 mock) base64 이미지로 얼굴 인증 요청
   const verifyFace = async (base64: string) => {
     setStep('verifying');
+
     try {
-      // POST /auth/face-verify
       const res = await apiCall('POST', '/auth/face-verify', {
         image: base64,
       });
-      setStep(res?.data?.match ? 'success' : 'fail');
+
+      if (!res?.data?.match) {
+        setStep('fail');
+        return;
+      }
+
+      await AsyncStorage.setItem(
+        'face_vector',
+        JSON.stringify(res.data.face_vector)
+      );
+
+      setStep('success');
     } catch (e) {
       setStep('fail');
     }
