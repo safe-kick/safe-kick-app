@@ -19,6 +19,15 @@ ENV PATH="$NVM_DIR/versions/node/v20.20.2/bin:$PATH"
 
 WORKDIR /app
 
+# package 파일 먼저 복사
+COPY package*.json ./
+
+# 이미지 빌드 시 npm install
+RUN npm install
+
+# 프로젝트 복사
+COPY . .
+
 EXPOSE 8081
 
-CMD ["sh", "-c", "npm install && npx expo start --host lan"]
+CMD ["npx", "expo", "start"]
