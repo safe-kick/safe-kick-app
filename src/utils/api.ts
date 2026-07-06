@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE, RASPI_API_BASE } from '../constants/api';
+import { API_BASE } from '../constants/api';
 
 // ─── Mock 데이터 매핑 ────────────────────────────────────
 // 서버 연결 실패 시 아래 mock 데이터로 자동 대체됩니다
@@ -131,31 +131,9 @@ export async function apiCall<T = any>(
   } catch (e) {
     // 서버 호출 중 에러 → mock으로 fallback
     console.log(`[API] 서버 오류 → mock fallback: ${key}`, e);
-    //_serverAvailable = false; // 캐시 무효화
+    _serverAvailable = false; // 캐시 무효화
     const mock = MOCK_MAP[key];
     if (mock) return mock as T;
     throw e;
   }
-}
-
-export async function raspiApiCall<T = any>(
-  method: 'GET' | 'POST' | 'PATCH',
-  path: string,
-  body?: object,
-): Promise<T> {
-  const res = await fetch(`${RASPI_API_BASE}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(8000),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `HTTP ${res.status}`);
-  }
-
-  return res.json();
 }

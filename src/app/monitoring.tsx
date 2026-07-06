@@ -9,9 +9,7 @@ import {
 } from 'react-native';
 import { WFBadge } from '../components/ui';
 import { T } from '../constants/colors';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiCall, raspiApiCall } from '../utils/api';
-import { RASPI_API_BASE } from '../constants/api';
+import { apiCall } from '../utils/api';
 
 // ─── 타입 ────────────────────────────────────────────────
 type Phase = 'normal' | 'remeasure' | 'slowdown' | 'stopped';
@@ -252,85 +250,17 @@ const sp = StyleSheet.create({
 export default function MonitoringScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [phase, setPhase] = useState<Phase>('normal');
+  const [warningReason, setWarningReason] = useState<WarningReason>('two_person');
   const [countdown, setCountdown] = useState(REMEASURE_SEC);
   const [speed, setSpeed] = useState(MAX_SPEED);
   const cdProgress = useRef(new Animated.Value(1)).current;
   const sessionId = 5;
-  const [faceScore, setFaceScore] = useState(0);
-  const [weight, setWeight] = useState(0);
-  const [gas, setGas] = useState(0);
-  const [isLocked, setIsLocked] = useState(false);
-  const [warningCount, setWarningCount] = useState(0);
-  const [warningReason, setWarningReason] = useState<WarningReason | null>(null);
-  const phaseRef = useRef<Phase>('normal');
-
-
-  // ─── SSE 이벤트 수신 ─────────────────────────────────────
-  useEffect(() => {
-    const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
-
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      setFaceScore(data.face_score);
-      setWeight(data.weight);
-      setGas(data.gas);
-      setIsLocked(data.is_locked);
-      setWarningReason(data.warning_reason);
-
-      if (data.warning_reason) {
-          setWarningReason(data.warning_reason);
-          setIsLocked(data.is_locked);
-
-          if (phaseRef.current === 'normal') {
-            setPhase('remeasure');
-          }
-        }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, []);
-
-  // phaseRef 업데이트
-  useEffect(() => {
-      phaseRef.current = phase;
-    }, [phase]);
 
   // 라이딩 타이머
   useEffect(() => {
     const t = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(t);
   }, []);
-
-  // mock 경고 함수
-  const triggerMockWarning = async (reason: 'two_person' | 'helmet_fail') => {
-  try {
-    const sessionId = await AsyncStorage.getItem('session_id');
-
-    if (!sessionId) {
-      console.log('[MOCK WARNING] session_id 없음');
-      return;
-    }
-
-    setWarningReason(reason);
-    setWarningCount(prev => prev + 1);
-    setIsLocked(true);
-    setPhase('remeasure');
-
-    await raspiApiCall('POST', '/lock', {
-      session_id: Number(sessionId),
-      reason,
-    });
-  } catch (e) {
-    console.log('[MOCK WARNING] lock 실패:', e);
-  }
-};
 
   // 재측정 카운트다운
   useEffect(() => {
@@ -378,25 +308,12 @@ export default function MonitoringScreen() {
 
   const doReturn = async () => {
     try {
-      const sessionId = await AsyncStorage.getItem('session_id');
-      const rideId = await AsyncStorage.getItem('ride_id');
-
-      await raspiApiCall('POST', '/session/end');
-
-      if (rideId) {
-        await apiCall('PATCH', `/rides/${rideId}/end`, {
-          ended_at: new Date().toISOString(),
-          warning_count: warningCount,
-        });
-      }
-
-      if (sessionId) {
-        await AsyncStorage.setItem('last_session_id', sessionId);
-      }
-    } catch (e) {
-      console.log(e);
-    }
-
+      await apiCall('POST', '/session/end', {
+        session_id: sessionId,
+        ended_at: new Date().toISOString(),
+        warning_count: phase !== 'normal' ? 1 : 0,
+      });
+    } catch { }
     router.replace('/return-complete');
   };
 
@@ -430,31 +347,20 @@ export default function MonitoringScreen() {
 
   // 센서 상태
   const sensors: SensorRow[] = [
+    { label: '가스 센서 (알코올)', status: 'ok', value: '0.02 ppm' },
     {
-      label: '가스 센서 (알코올)',
-      status: gas > 0.5 ? 'warn' : 'ok',
-      value: `${gas} ppm`,
+      label: '헬멧 착용 감지',
+      status: phase !== 'normal' && warningReason === 'helmet_fail' ? 'warn' : 'ok',
+      value: phase !== 'normal' && warningReason === 'helmet_fail' ? '미착용 감지' : '착용',
     },
     {
       label: '탑승 인원 감지',
-      status: warningReason === 'two_person' ? 'warn' : 'ok',
-      value: warningReason === 'two_person' ? '2명 감지' : '1명',
+      status: phase !== 'normal' && warningReason === 'two_person' ? 'warn' : 'ok',
+      value: phase !== 'normal' && warningReason === 'two_person' ? '2명 감지' : '1명',
     },
-    {
-      label: '얼굴 인식',
-      status: faceScore < 0.5 ? 'warn' : 'ok',
-      value: `${Math.round(faceScore * 100)}%`,
-    },
-    {
-      label: '무게 센서',
-      status: weight > 100 ? 'warn' : 'ok',
-      value: `${weight} kg`,
-    },
-    {
-      label: '잠금 상태',
-      status: isLocked ? 'warn' : 'ok',
-      value: isLocked ? '잠금' : '해제',
-    },
+    { label: 'GPS 위치', status: 'ok', value: '신호 양호' },
+    { label: 'STM32 컨트롤러', status: 'info', value: '연결됨' },
+    { label: 'Raspberry Pi', status: 'info', value: '192.168.4.1' },
   ];
 
   return (
@@ -474,7 +380,7 @@ export default function MonitoringScreen() {
       </View>
 
       {/* ── 경고 배너 (경고 상태일 때만) ── */}
-      {phase !== 'normal' && warningReason && (
+      {phase !== 'normal' && (
         <WarningBanner phase={phase} reason={warningReason} countdown={countdown} cdProgress={cdProgress} />
       )}
 
@@ -501,7 +407,7 @@ export default function MonitoringScreen() {
             <View style={s.statDivider} />
             <View style={s.stat}>
               <Text style={[s.statVal, phase !== 'normal' && { color: T.warn }]}>
-                {warningCount}
+                {phase !== 'normal' ? '1' : '0'}
               </Text>
               <Text style={s.statLabel}>경고 발생 횟수</Text>
             </View>
@@ -550,13 +456,13 @@ export default function MonitoringScreen() {
           <View style={{ gap: 8 }}>
             <TouchableOpacity
               style={s.testBtn}
-              onPress={() => triggerMockWarning('two_person')}
+              onPress={() => { setWarningReason('two_person'); setPhase('remeasure'); }}
             >
               <Text style={s.testBtnText}>⚠  이중 탑승 경고 테스트 (mock)</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={s.testBtn}
-              onPress={() => triggerMockWarning('helmet_fail')}
+              onPress={() => { setWarningReason('helmet_fail'); setPhase('remeasure'); }}
             >
               <Text style={s.testBtnText}>🪖  헬멧 미착용 경고 테스트 (mock)</Text>
             </TouchableOpacity>

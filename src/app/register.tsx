@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -8,7 +9,7 @@ import {
 } from 'react-native';
 import { TopBar } from '../components/ui';
 import { T } from '../constants/colors';
-
+import { apiCall } from '../utils/api';
 
 function ProgressDots({ total = 3, active = 0 }: { total?: number; active?: number }) {
   return (
@@ -32,31 +33,21 @@ export default function RegisterScreen() {
   const [error, setError] = useState('');
 
   const handleNext = async () => {
-    if (!name || !email || !password || !passwordConfirm) {
-      setError('모든 항목을 입력하세요.');
-      return;
+    if (!name || !email || !password || !passwordConfirm) { setError('모든 항목을 입력하세요.'); return; }
+    if (password !== passwordConfirm) { setError('비밀번호가 일치하지 않습니다.'); return; }
+    setLoading(true); setError('');
+    try {
+      // POST /auth/register
+      const res = await apiCall('POST', '/auth/register', { name, email, phone, password });
+      await AsyncStorage.setItem('token', res.data.token);
+      // 이름이 main/mypage에서 보이도록 user 정보도 저장
+      await AsyncStorage.setItem('user', JSON.stringify({ name, email }));
+      router.push('/license-capture');
+    } catch (e: any) {
+      setError(e.message || '회원가입에 실패했습니다.');
+    } finally {
+      setLoading(false);
     }
-
-    if (password !== passwordConfirm) {
-      setError('비밀번호가 일치하지 않습니다.');
-      return;
-    }
-
-    if (!agreed) {
-      setError('이용약관에 동의해주세요.');
-      return;
-    }
-
-    setError('');
-
-    router.push({
-      pathname: '/license-capture',
-      params: {
-        name,
-        email,
-        password,
-      },
-    });
   };
 
   return (

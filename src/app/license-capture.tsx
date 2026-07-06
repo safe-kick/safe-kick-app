@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { T } from '../constants/colors';
@@ -8,12 +8,6 @@ import { T } from '../constants/colors';
 export default function LicenseCaptureScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
-
-  const { name, email, password } = useLocalSearchParams<{
-    name: string;
-    email: string;
-    password: string;
-  }>();
 
   // 네이티브 환경에서는 진입 시 후면 카메라 권한을 바로 요청
   useEffect(() => {
@@ -25,14 +19,7 @@ export default function LicenseCaptureScreen() {
   const handleCapture = async () => {
     // 웹 또는 카메라 미준비 환경 — 촬영 없이 기존 mock 흐름 유지
     if (Platform.OS === 'web' || !permission?.granted || !cameraRef.current) {
-      router.push({
-          pathname: '/license-confirm',
-          params: {
-            name,
-            email,
-            password,
-          },
-        });
+      router.push('/license-confirm');
       return;
     }
     try {
@@ -48,14 +35,7 @@ export default function LicenseCaptureScreen() {
     } catch (e) {
       // 촬영 실패해도 OCR mock 확인 화면으로는 진행
     }
-    router.push({
-      pathname: '/license-confirm',
-      params: {
-        name,
-        email,
-        password,
-      },
-    });
+    router.push('/license-confirm');
   };
 
   return (
