@@ -13,6 +13,7 @@ import { apiCall } from '../utils/api';
 
 // ─── 타입 ────────────────────────────────────────────────
 type Phase = 'normal' | 'remeasure' | 'slowdown' | 'stopped';
+type WarningReason = 'two_person' | 'helmet_fail';
 
 interface SensorRow {
   label: string;
@@ -23,7 +24,24 @@ interface SensorRow {
 // ─── 상수 ────────────────────────────────────────────────
 const REMEASURE_SEC = 8;
 const MAX_SPEED = 20;
-const WARNING_REASON = '이중 탑승 감지됨';
+
+// 경고 사유별 타이틀
+const WARNING_TITLES: Record<WarningReason, string> = {
+  two_person: '이중 탑승 감지됨',
+  helmet_fail: '헬멧 미착용 감지됨',
+};
+
+// 경고 사유 + 단계에 따른 서브 텍스트
+function getWarningSub(reason: WarningReason, phase: Phase) {
+  if (phase === 'stopped') {
+    return reason === 'helmet_fail'
+      ? '완전 정지됨 — 헬멧 착용 후 재시작하세요'
+      : '완전 정지됨 — 1인 탑승 후 재시작하세요';
+  }
+  return reason === 'helmet_fail'
+    ? '헬멧을 착용한 후 계속하세요'
+    : '단독 탑승 확인 시 자동 해제';
+}
 
 // ─── 단계 인디케이터 ──────────────────────────────────────
 const STEPS = ['이상 감지', '재측정 중', '감속 중', '정지'];
@@ -131,8 +149,8 @@ const si = StyleSheet.create({
 });
 
 // ─── 경고 배너 ────────────────────────────────────────────
-function WarningBanner({ phase, countdown, cdProgress }: {
-  phase: Phase; countdown: number; cdProgress: Animated.Value;
+function WarningBanner({ phase, reason, countdown, cdProgress }: {
+  phase: Phase; reason: WarningReason; countdown: number; cdProgress: Animated.Value;
 }) {
   const isDanger = phase === 'slowdown' || phase === 'stopped';
   const bg = isDanger ? T.errBg : T.warnBg;
@@ -143,14 +161,12 @@ function WarningBanner({ phase, countdown, cdProgress }: {
     <View style={[wb.wrap, { backgroundColor: bg, borderBottomColor: borderColor }]}>
       <View style={wb.row}>
         <View style={[wb.iconBox, { backgroundColor: isDanger ? 'rgba(198,40,40,0.12)' : 'rgba(230,81,0,0.12)' }]}>
-          <Text style={{ fontSize: 16 }}>⚠</Text>
+          <Text style={{ fontSize: 16 }}>{reason === 'helmet_fail' ? '🪖' : '⚠'}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[wb.title, { color: textColor }]}>{WARNING_REASON}</Text>
+          <Text style={[wb.title, { color: textColor }]}>{WARNING_TITLES[reason]}</Text>
           <Text style={[wb.sub, { color: textColor }]}>
-            {phase === 'stopped'
-              ? '완전 정지됨 — 1인 탑승 후 재시작하세요'
-              : '단독 탑승 확인 시 자동 해제'}
+            {getWarningSub(reason, phase)}
           </Text>
         </View>
         {/* 카운트다운 or 속도 */}
@@ -234,6 +250,7 @@ const sp = StyleSheet.create({
 export default function MonitoringScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [phase, setPhase] = useState<Phase>('normal');
+  const [warningReason, setWarningReason] = useState<WarningReason>('two_person');
   const [countdown, setCountdown] = useState(REMEASURE_SEC);
   const [speed, setSpeed] = useState(MAX_SPEED);
   const cdProgress = useRef(new Animated.Value(1)).current;
@@ -332,9 +349,14 @@ export default function MonitoringScreen() {
   const sensors: SensorRow[] = [
     { label: '가스 센서 (알코올)', status: 'ok', value: '0.02 ppm' },
     {
+      label: '헬멧 착용 감지',
+      status: phase !== 'normal' && warningReason === 'helmet_fail' ? 'warn' : 'ok',
+      value: phase !== 'normal' && warningReason === 'helmet_fail' ? '미착용 감지' : '착용',
+    },
+    {
       label: '탑승 인원 감지',
-      status: phase === 'normal' ? 'ok' : 'warn',
-      value: phase === 'normal' ? '1명' : '2명 감지',
+      status: phase !== 'normal' && warningReason === 'two_person' ? 'warn' : 'ok',
+      value: phase !== 'normal' && warningReason === 'two_person' ? '2명 감지' : '1명',
     },
     { label: 'GPS 위치', status: 'ok', value: '신호 양호' },
     { label: 'STM32 컨트롤러', status: 'info', value: '연결됨' },
@@ -359,7 +381,7 @@ export default function MonitoringScreen() {
 
       {/* ── 경고 배너 (경고 상태일 때만) ── */}
       {phase !== 'normal' && (
-        <WarningBanner phase={phase} countdown={countdown} cdProgress={cdProgress} />
+        <WarningBanner phase={phase} reason={warningReason} countdown={countdown} cdProgress={cdProgress} />
       )}
 
       {/* ── 단계 인디케이터 (경고 상태일 때만) ── */}
@@ -429,11 +451,22 @@ export default function MonitoringScreen() {
           ))}
         </View>
 
-        {/* mock 경고 트리거 버튼 */}
+        {/* mock 경고 트리거 버튼 — 경고 사유별로 테스트 가능 */}
         {phase === 'normal' && (
-          <TouchableOpacity style={s.testBtn} onPress={() => setPhase('remeasure')}>
-            <Text style={s.testBtnText}>⚠  경고 테스트 (mock)</Text>
-          </TouchableOpacity>
+          <View style={{ gap: 8 }}>
+            <TouchableOpacity
+              style={s.testBtn}
+              onPress={() => { setWarningReason('two_person'); setPhase('remeasure'); }}
+            >
+              <Text style={s.testBtnText}>⚠  이중 탑승 경고 테스트 (mock)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.testBtn}
+              onPress={() => { setWarningReason('helmet_fail'); setPhase('remeasure'); }}
+            >
+              <Text style={s.testBtnText}>🪖  헬멧 미착용 경고 테스트 (mock)</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         <View style={{ height: 90 }} />

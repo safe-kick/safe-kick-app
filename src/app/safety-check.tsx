@@ -51,6 +51,7 @@ const cr = StyleSheet.create({
 export default function SafetyCheckScreen() {
   const [checks, setChecks] = useState<CheckItem[]>([
     { label: '얼굴 인증', status: 'done' },
+    { label: '헬멧 착용', status: 'checking' },
     { label: '음주 측정 (가스 센서)', status: 'checking' },
     { label: '탑승 인원 감지', status: 'checking' },
     { label: '잠금 상태', status: 'checking' },
@@ -59,7 +60,9 @@ export default function SafetyCheckScreen() {
 
   useEffect(() => {
     (async () => {
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1200));
+      setChecks(p => p.map(c => c.label.includes('헬멧') ? { ...c, status: 'ok', value: '착용' } : c));
+      await new Promise(r => setTimeout(r, 1000));
       setChecks(p => p.map(c => c.label.includes('음주') ? { ...c, status: 'ok', value: '0.02 ppm' } : c));
       await new Promise(r => setTimeout(r, 1000));
       setChecks(p => p.map(c => c.label.includes('탑승') ? { ...c, status: 'ok', value: '1명' } : c));
@@ -71,6 +74,12 @@ export default function SafetyCheckScreen() {
 
   const allPass = phase === 'pass';
   const anyFail = phase === 'fail';
+
+  // 어떤 항목이 실패했는지 구분 (실패 메시지 분기용)
+  const helmetCheck = checks.find(c => c.label.includes('헬멧'));
+  const alcoholCheck = checks.find(c => c.label.includes('음주'));
+  const helmetFail = helmetCheck?.status === 'fail';
+  const alcoholFail = alcoholCheck?.status === 'fail';
 
   return (
     <View style={{ flex: 1, backgroundColor: T.bg }}>
@@ -101,10 +110,22 @@ export default function SafetyCheckScreen() {
           </View>
         )}
         {anyFail && (
-          <View style={[s.msgBox, { backgroundColor: T.errBg, borderColor: 'rgba(198,40,40,0.2)' }]}>
-            <Text style={[s.msgText, { color: T.err }]}>
-              ⚠  안전 점검에 실패했습니다. 다시 시도하세요.
-            </Text>
+          <View style={{ gap: 8 }}>
+            <View style={[s.msgBox, { backgroundColor: T.errBg, borderColor: 'rgba(198,40,40,0.2)' }]}>
+              <Text style={[s.msgText, { color: T.err }]}>
+                ⚠  {helmetFail
+                  ? '헬멧 미착용이 감지되어 운행이 제한됩니다.'
+                  : alcoholFail
+                  ? '음주가 감지되어 운행이 제한됩니다.'
+                  : '2인 탑승이 감지되어 운행이 제한됩니다. 1인만 탑승 후 다시 시도하세요.'}
+              </Text>
+            </View>
+            {helmetFail && (
+              <View style={[s.msgBox, { backgroundColor: T.warnBg, borderColor: 'rgba(230,81,0,0.25)', flexDirection: 'row', gap: 8 }]}>
+                <Text style={{ fontSize: 14 }}>🪖</Text>
+                <Text style={[s.msgText, { color: T.warn, flex: 1 }]}>헬멧을 착용하고 카메라 앞에 서주세요.</Text>
+              </View>
+            )}
           </View>
         )}
         {allPass && (

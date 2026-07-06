@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { router } from 'expo-router';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { T } from '../constants/colors';
 import { TopBar, WFCard, WFBadge } from '../components/ui';
 import { apiCall } from '../utils/api';
@@ -9,24 +10,46 @@ type Step = 'capture' | 'verifying' | 'success' | 'fail';
 
 export default function SelfieScreen() {
   const [step, setStep] = useState<Step>('capture');
-  const [userName, setUserName] = useState('');
-  const [licenseNo, setLicenseNo] = useState('');
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
 
-  const handleCapture = async () => {
+  // 네이티브 환경에서는 진입 시 전면 카메라 권한을 바로 요청
+  useEffect(() => {
+    if (Platform.OS !== 'web' && !permission?.granted) {
+      requestPermission();
+    }
+  }, []);
+
+  // 촬영된(또는 mock) base64 이미지로 얼굴 인증 요청
+  const verifyFace = async (base64: string) => {
     setStep('verifying');
     try {
       // POST /auth/face-verify
-      // 실제 카메라 연동 전까지는 빈 body로 호출 (서버가 mock 응답)
       const res = await apiCall('POST', '/auth/face-verify', {
-        image: 'mock_base64_image',
+        image: base64,
       });
-      if (res.data.match) {
-        setStep('success');
-      } else {
-        setStep('fail');
-      }
+      setStep(res?.data?.match ? 'success' : 'fail');
     } catch (e) {
       setStep('fail');
+    }
+  };
+
+  const handleCapture = async () => {
+    // 웹 또는 카메라 미준비 환경 — mock 이미지로 기존 흐름 유지
+    if (Platform.OS === 'web' || !permission?.granted || !cameraRef.current) {
+      await verifyFace('mock_base64_image');
+      return;
+    }
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.7,
+        exif: false,
+      });
+      await verifyFace(photo?.base64 ?? 'mock_base64_image');
+    } catch (e) {
+      // 촬영 자체가 실패해도 mock으로 폴백해 흐름이 끊기지 않게 함
+      await verifyFace('mock_base64_image');
     }
   };
 
@@ -41,12 +64,20 @@ export default function SelfieScreen() {
         <View style={{ width: 36 }} />
       </View>
       <View style={s.cameraArea}>
+        {/* 실제 전면 카메라 — 네이티브 + 권한 허용 시에만 렌더, 웹은 기존 플레이스홀더 유지 */}
+        {Platform.OS !== 'web' && permission?.granted && (
+          <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="front" />
+        )}
         <View style={s.faceOval}>
-          <Text style={s.faceIcon}>👤</Text>
+          {!(Platform.OS !== 'web' && permission?.granted) && <Text style={s.faceIcon}>👤</Text>}
           <View style={s.greenScan} />
         </View>
         <Text style={s.faceTitle}>정면을 바라보세요</Text>
-        <Text style={s.faceSub}>눈을 깜빡이지 마세요</Text>
+        <Text style={s.faceSub}>
+          {Platform.OS !== 'web' && !permission?.granted
+            ? '카메라 권한이 필요합니다'
+            : '눈을 깜빡이지 마세요'}
+        </Text>
       </View>
       <View style={s.bottom}>
         <View style={s.privacyBox}>
@@ -54,9 +85,15 @@ export default function SelfieScreen() {
             🔒  얼굴 벡터 데이터는 세션 메모리에 임시 저장되며, 라이딩 종료 시 즉시 삭제됩니다. 서버에 저장되지 않습니다.
           </Text>
         </View>
-        <TouchableOpacity style={s.shutterOuter} onPress={handleCapture}>
-          <View style={s.shutterInner} />
-        </TouchableOpacity>
+        {Platform.OS !== 'web' && !permission?.granted ? (
+          <TouchableOpacity style={s.shutterOuter} onPress={requestPermission}>
+            <Text style={{ fontSize: 11, color: '#FFF', textAlign: 'center', paddingHorizontal: 4 }}>권한{'\n'}허용</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={s.shutterOuter} onPress={handleCapture}>
+            <View style={s.shutterInner} />
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
