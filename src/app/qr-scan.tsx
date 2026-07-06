@@ -5,6 +5,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { T } from '../constants/colors';
 import { apiCall } from '../utils/api';
+import { raspiApiCall } from '../utils/api';
+import { RASPI_IP } from '../constants/api';
 
 function QRCorners({ size = 220 }: { size?: number }) {
   const cs = 28, sw = 3, c = '#FFF';
@@ -53,10 +55,11 @@ export default function QRScanScreen() {
     try {
       await AsyncStorage.setItem('kickboard_id', kickboardId);
       await AsyncStorage.setItem('raspi_ip', raspiIp);
-      const res = await apiCall('GET', '/status');
+      const res = await raspiApiCall('GET', '/status');
       if (res?.status !== 'success') throw new Error('연결 실패');
       router.push('/selfie');
     } catch (e) {
+      console.log('[QR] 연결 실패:', e);
       setScanned(false);
       setScanning(false);
       setError('스쿠터 연결에 실패했습니다. 다시 시도해주세요.');
@@ -81,7 +84,7 @@ export default function QRScanScreen() {
   const handleMockScan = () => {
     if (scanned || scanning) return;
     setScanned(true);
-    connectKickboard('KB-001', '192.168.0.25');
+    connectKickboard('KB-001', RASPI_IP);
   };
 
   // 취소 — 스캔 중이면 상태 초기화, 아니면 뒤로가기
