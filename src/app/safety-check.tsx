@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-nati
 import { router } from 'expo-router';
 import { T } from '../constants/colors';
 import { TopBar, WFCard, WFBadge } from '../components/ui';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiCall, raspiApiCall } from '../utils/api';
 
 type S = 'done' | 'checking' | 'ok' | 'fail';
 interface CheckItem { label: string; status: S; value?: string }
@@ -71,6 +73,44 @@ export default function SafetyCheckScreen() {
       setPhase('pass');
     })();
   }, []);
+
+  const startRide = async () => {
+    try {
+      const kickboardId = await AsyncStorage.getItem('kickboard_id');
+      const faceVectorStr = await AsyncStorage.getItem('face_vector');
+
+      if (!kickboardId || !faceVectorStr) {
+        throw new Error('운행 시작 정보가 없습니다.');
+      }
+
+      const faceVector = JSON.parse(faceVectorStr);
+
+      const sessionRes = await raspiApiCall('POST', '/session/start', {
+        user_id: 1,
+        kickboard_id: kickboardId,
+        face_vector: faceVector,
+      });
+
+      const sessionId = sessionRes.data.session_id;
+
+      const rideRes = await apiCall('POST', '/rides/start', {
+        kickboard_id: kickboardId,
+        started_at: new Date().toISOString(),
+      });
+
+      const rideId = rideRes.data.ride_id;
+
+      await AsyncStorage.setItem('session_id', String(sessionId));
+      await AsyncStorage.setItem('ride_id', String(rideId));
+
+      router.replace('/monitoring');
+    } catch (e) {
+      console.log(e);
+      setPhase('fail');
+    }
+  };
+
+
 
   const allPass = phase === 'pass';
   const anyFail = phase === 'fail';
@@ -144,7 +184,7 @@ export default function SafetyCheckScreen() {
             {/* 버튼을 TouchableOpacity로 감싸고 width: '100%' 명시 */}
             <TouchableOpacity
               style={s.startBtn}
-              onPress={() => router.replace('/monitoring')}
+              onPress={startRide}
               activeOpacity={0.8}
             >
               <Text style={s.startBtnText}>⚡  라이딩 시작</Text>

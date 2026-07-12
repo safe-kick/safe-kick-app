@@ -4,7 +4,8 @@ import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { T } from '../constants/colors';
 import { TopBar, WFCard, WFBadge } from '../components/ui';
-import { apiCall } from '../utils/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiCall, raspiApiCall } from '../utils/api';
 
 type Step = 'capture' | 'verifying' | 'success' | 'fail';
 
@@ -23,13 +24,39 @@ export default function SelfieScreen() {
   // 촬영된(또는 mock) base64 이미지로 얼굴 인증 요청
   const verifyFace = async (base64: string) => {
     setStep('verifying');
+
     try {
-      // POST /auth/face-verify
-      const res = await apiCall('POST', '/auth/face-verify', {
-        image: base64,
-      });
-      setStep(res?.data?.match ? 'success' : 'fail');
+      let res;
+
+      try {
+        // 1순위: 라즈베리파이 실제 얼굴 인증
+        res = await raspiApiCall('POST', '/face/verify', {
+          image: base64,
+        });
+
+        console.log('[FACE] Raspberry Pi 얼굴 인증 사용');
+      } catch (raspiError) {
+        // 2순위: 라즈베리파이 없으면 Node mock 얼굴 인증
+        console.log('[FACE] Raspberry Pi 연결 실패 → Node mock 얼굴 인증 사용');
+
+        res = await apiCall('POST', '/auth/face-verify', {
+          image: base64,
+        });
+      }
+
+      if (!res?.data?.match) {
+        setStep('fail');
+        return;
+      }
+
+      await AsyncStorage.setItem(
+        'face_vector',
+        JSON.stringify(res.data.face_vector)
+      );
+
+      setStep('success');
     } catch (e) {
+      console.log('[FACE] 얼굴 인증 실패:', e);
       setStep('fail');
     }
   };
