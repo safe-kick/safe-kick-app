@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -94,6 +95,7 @@ export default function LicenseConfirmScreen() {
 
       // 2. 발급된 user_id로 라즈베리파이에 얼굴(면허증 사진) 등록
       const userId = registerRes?.data?.user_id;
+      let faceRegisterFailed = false;
       if (userId) {
         try {
           await raspiApiCall("POST", "/face/register", {
@@ -104,14 +106,26 @@ export default function LicenseConfirmScreen() {
           // 계정 생성은 성공했으니 얼굴 등록 실패해도 회원가입 자체는 진행
           // (추후 마이페이지 등에서 재등록 유도 필요)
           console.log("얼굴 등록 실패:", faceError);
+          faceRegisterFailed = true;
         }
+      } else {
+        faceRegisterFailed = true;
       }
 
       // 더 이상 필요 없는 임시 저장값 정리
       await AsyncStorage.removeItem("license_image_base64");
       await AsyncStorage.removeItem("license_ocr_raw");
 
-      router.replace("/login");
+      if (faceRegisterFailed) {
+        // 얼굴 등록 실패시 사용자에게 알림
+        Alert.alert(
+          "얼굴 등록 실패",
+          "회원가입은 완료됐지만, 얼굴 등록에 실패했습니다.\n마이페이지에서 다시 시도해주세요.",
+          [{ text: "확인", onPress: () => router.replace("/login") }],
+        );
+      } else {
+        router.replace("/login");
+      }
     } catch (e) {
       console.log(e);
     } finally {
