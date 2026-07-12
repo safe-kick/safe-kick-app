@@ -89,27 +89,51 @@ export default function LicenseConfirmScreen() {
         license_image: licenseImage,
       });
 
-      if (registerRes?.data?.token) {
-        await AsyncStorage.setItem("token", registerRes.data.token);
-      }
-
       // 2. 발급된 user_id로 라즈베리파이에 얼굴(면허증 사진) 등록
       const userId = registerRes?.data?.user_id;
       let faceRegisterFailed = false;
+      let faceFailReason = "";
+
       if (userId) {
         try {
-          await raspiApiCall("POST", "/face/register", {
+          const faceRes = await raspiApiCall("POST", "/face/register", {
             user_id: userId,
             image: licenseImage,
           });
+
+          // HTTP 200이어도 실패일 수 있음 — data.registered로 실제 성공 여부 확인
+          if (!faceRes?.data?.registered) {
+            faceRegisterFailed = true;
+            faceFailReason = faceRes?.data?.reason || "unknown";
+          }
         } catch (faceError) {
-          // 계정 생성은 성공했으니 얼굴 등록 실패해도 회원가입 자체는 진행
-          // (추후 마이페이지 등에서 재등록 유도 필요)
+          // 네트워크/서버 에러 (라파 자체가 꺼져있는 경우 등)
           console.log("얼굴 등록 실패:", faceError);
           faceRegisterFailed = true;
+          faceFailReason = "network_error";
         }
       } else {
         faceRegisterFailed = true;
+        faceFailReason = "no_user_id";
+      }
+
+      // 3. 자동 로그인 — /auth/register는 token을 반환하지 않으므로 별도 로그인 호출
+      try {
+        const loginRes = await apiCall("POST", "/auth/login", {
+          email,
+          password,
+        });
+        if (loginRes?.data?.token) {
+          await AsyncStorage.setItem("token", loginRes.data.token);
+        }
+        if (loginRes?.data?.user) {
+          await AsyncStorage.setItem(
+            "user",
+            JSON.stringify(loginRes.data.user),
+          );
+        }
+      } catch (loginError) {
+        console.log("자동 로그인 실패:", loginError);
       }
 
       // 더 이상 필요 없는 임시 저장값 정리
@@ -118,13 +142,15 @@ export default function LicenseConfirmScreen() {
 
       if (faceRegisterFailed) {
         // 얼굴 등록 실패시 사용자에게 알림
+        console.log("얼굴 등록 실패 사유:", faceFailReason);
         Alert.alert(
           "얼굴 등록 실패",
           "회원가입은 완료됐지만, 얼굴 등록에 실패했습니다.\n마이페이지에서 다시 시도해주세요.",
-          [{ text: "확인", onPress: () => router.replace("/login") }],
+          [{ text: "확인", onPress: () => router.replace("/main") }],
         );
       } else {
-        router.replace("/login");
+        // 자동 로그인 완료 → 로그인 화면 대신 바로 메인으로
+        router.replace("/main");
       }
     } catch (e) {
       console.log(e);
