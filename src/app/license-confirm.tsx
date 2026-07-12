@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -141,13 +142,22 @@ export default function LicenseConfirmScreen() {
       await AsyncStorage.removeItem("license_ocr_raw");
 
       if (faceRegisterFailed) {
-        // 얼굴 등록 실패시 사용자에게 알림
+        // 얼굴 등록 실패는 조용히 넘어가지 않고 반드시 사용자에게 알림
         console.log("얼굴 등록 실패 사유:", faceFailReason);
-        Alert.alert(
-          "얼굴 등록 실패",
-          "회원가입은 완료됐지만, 얼굴 등록에 실패했습니다.\n마이페이지에서 다시 시도해주세요.",
-          [{ text: "확인", onPress: () => router.replace("/main") }],
-        );
+
+        if (Platform.OS === "web") {
+          // Alert.alert()는 웹에서 아무 UI도 그리지 않아 onPress가 영원히 호출되지 않음 → 웹에서는 팝업 없이 콘솔 경고만 남기고 바로 진행
+          console.warn(
+            "[얼굴 등록 실패] 회원가입은 완료됐지만 얼굴 등록에 실패했습니다. 마이페이지에서 다시 시도해주세요.",
+          );
+          router.replace("/main");
+        } else {
+          Alert.alert(
+            "얼굴 등록 실패",
+            "회원가입은 완료됐지만, 얼굴 등록에 실패했습니다.\n마이페이지에서 다시 시도해주세요.",
+            [{ text: "확인", onPress: () => router.replace("/main") }],
+          );
+        }
       } else {
         // 자동 로그인 완료 → 로그인 화면 대신 바로 메인으로
         router.replace("/main");
