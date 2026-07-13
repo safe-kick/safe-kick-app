@@ -25,9 +25,14 @@ COPY package*.json ./
 # 이미지 빌드 시 npm install
 RUN npm install
 
+# EAS CLI + ngrok(터널링용) 전역 설치 (컨테이너 재생성해도 유지됨)
+RUN npm install -g eas-cli @expo/ngrok
+
 # 프로젝트 복사
 COPY . .
 
 EXPOSE 8081
 
-CMD ["npx", "expo", "start"]
+CMD ["tail", "-f", "/dev/null"]
+
+# 실행시 docker-compose exec -it metro npx expo start --dev-client --tunnel
