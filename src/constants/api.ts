@@ -4,8 +4,9 @@
 //   예) export const API_BASE = 'http://192.168.0.10';
 
 // Node.js 서버
-export const API_BASE = 'http://localhost';
+export const API_BASE = 'http://100.80.78.107';
 
 // Raspberry Pi
-export const RASPI_IP = '10.10.141.46';
+export const RASPI_IP = '100.115.171.90';
 export const RASPI_API_BASE = `http://${RASPI_IP}:8000`;
+
