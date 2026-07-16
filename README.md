@@ -133,11 +133,31 @@ cd safe-kick-app
 # 이미지 빌드 (최초 1회, 또는 package.json/Dockerfile 변경 시. 3~5분 소요)
 docker-compose build
 
-# 컨테이너 백그라운드 실행 (이 시점엔 Metro가 아직 안 뜬 상태 — 정상입니다)
+# 컨테이너 백그라운드 실행
 docker-compose up -d
+
+## package.json 또는 app.json이 변경된 경우
+
+새로운 Expo 패키지나 Config Plugin(예: expo-build-properties)이 추가되었다면
+한 번 아래 명령을 실행하여 의존성을 설치하세요.
+
+```bash
+docker-compose exec metro npm install
 ```
 
-**Metro 서버 실행 (매번 개발 시작할 때 이 명령어로):**
+만약 아래와 같은 오류가 발생한다면
+
+```
+PluginError: Failed to resolve plugin for module "expo-build-properties"
+```
+
+다음 명령으로 해결할 수 있습니다.
+
+```bash
+docker-compose exec metro npx expo install expo-build-properties
+```
+
+Metro 서버 실행 (매번 개발 시작할 때):
 
 ```bash
 docker-compose exec -it metro npx expo start --dev-client --tunnel
