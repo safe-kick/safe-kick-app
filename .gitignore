@@ -44,3 +44,4 @@ example
 
 # Personal API config
 app/api.ts
+app/constants/api.ts
