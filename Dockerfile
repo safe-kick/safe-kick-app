@@ -4,6 +4,9 @@ FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    libglib2.0-0 \
+    libnspr4 \
+    libnss3 \
     && rm -rf /var/lib/apt/lists/*
 
 # nvm 설치 및 Node.js v20.20.2 고정
