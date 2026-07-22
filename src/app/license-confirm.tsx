@@ -87,7 +87,6 @@ export default function LicenseConfirmScreen() {
         password,
         license_no: fields.licenseNo || "미인식",
         license_expires_at: toIsoDate(fields.expiresAt) || "2030-01-01",
-        license_image: licenseImage,
       });
 
       // 2. 발급된 user_id로 라즈베리파이에 얼굴(면허증 사진) 등록
