@@ -43,5 +43,6 @@ example
 /android
 
 # Personal API config
-app/api.ts
-src/constants/api.ts
+
+# 서버 주소/설정값 (각자 로컬 환경마다 다름)
+.env

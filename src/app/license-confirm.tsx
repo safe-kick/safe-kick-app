@@ -27,6 +27,43 @@ const EMPTY_FIELDS = {
   expiresAt: "",
 };
 
+type FaceDetectResponse = {
+  status: "success" | "error";
+  data: {
+    detected: boolean;
+    reason: "success" | "face_not_detected" | "invalid_image" | string;
+  };
+  message: string;
+};
+
+type FaceRegisterResponse = {
+  status: "success" | "error";
+  data: {
+    registered: boolean;
+    user_id: number;
+    reason: "success" | "face_not_detected" | "invalid_image" | string;
+  };
+  message: string;
+};
+
+// Alert.alert()는 웹(react-native-web)에서 UI를 그리지 않아 onPress가 영원히 호출되지 않음
+// → 플랫폼별로 분기해서 웹에서는 콘솔 경고 후 즉시 콜백 실행
+function crossPlatformAlert(
+  title: string,
+  message: string,
+  buttonText: string,
+  onPress: () => void,
+) {
+  if (Platform.OS === "web") {
+    console.warn(`[${title}] ${message}`);
+    onPress();
+  } else {
+    Alert.alert(title, message, [{ text: buttonText, onPress }], {
+      cancelable: false,
+    });
+  }
+}
+
 export default function LicenseConfirmScreen() {
   const [loading, setLoading] = useState(false);
   const [ocrLoading, setOcrLoading] = useState(true);
@@ -73,96 +110,157 @@ export default function LicenseConfirmScreen() {
     setFields((prev) => ({ ...prev, [key]: value }));
   };
 
+  // 재촬영 화면으로 이동 — name/email/password를 반드시 같이 실어 보냄
+  // (안 실으면 license-capture → license-confirm으로 다시 왔을 때 값이 사라짐)
+  const goRetakePhoto = () => {
+    router.replace({
+      pathname: "/license-capture",
+      params: { name, email, password },
+    });
+  };
+
   const handleConfirm = async () => {
     setLoading(true);
     try {
-      const licenseImage =
-        (await AsyncStorage.getItem("license_image_base64")) ||
-        "mock_license_image";
+      // AsyncStorage 키는 license-capture.tsx가 저장하는 키와 반드시 일치해야 함
+      const licenseImage = await AsyncStorage.getItem("license_image_base64");
 
-      // 1. 계정 생성 (Node 앱서버) — name/email/password + 면허 텍스트 정보
-      const registerRes = await apiCall("POST", "/auth/register", {
-        name,
-        email,
-        password,
-        license_no: fields.licenseNo || "미인식",
-        license_expires_at: toIsoDate(fields.expiresAt) || "2030-01-01",
-      });
-
-      // 2. 발급된 user_id로 라즈베리파이에 얼굴(면허증 사진) 등록
-      const userId = registerRes?.data?.user_id;
-      let faceRegisterFailed = false;
-      let faceFailReason = "";
-
-      if (userId) {
-        try {
-          const faceRes = await raspiApiCall("POST", "/face/register", {
-            user_id: userId,
-            image: licenseImage,
-          });
-
-          // HTTP 200이어도 실패일 수 있음 — data.registered로 실제 성공 여부 확인
-          if (!faceRes?.data?.registered) {
-            faceRegisterFailed = true;
-            faceFailReason = faceRes?.data?.reason || "unknown";
-          }
-        } catch (faceError) {
-          // 네트워크/서버 에러 (라파 자체가 꺼져있는 경우 등)
-          console.log("얼굴 등록 실패:", faceError);
-          faceRegisterFailed = true;
-          faceFailReason = "network_error";
-        }
-      } else {
-        faceRegisterFailed = true;
-        faceFailReason = "no_user_id";
+      if (!licenseImage) {
+        crossPlatformAlert(
+          "면허증 사진 없음",
+          "면허증 사진을 다시 촬영해주세요.",
+          "다시 촬영",
+          goRetakePhoto,
+        );
+        return;
       }
 
-      // 3. 자동 로그인 — /auth/register는 token을 반환하지 않으므로 별도 로그인 호출
+      // 1. 회원가입 전에 면허증 얼굴 검출 (user_id 없이, 저장 없이 검사만)
+      let detectRes: FaceDetectResponse;
       try {
-        const loginRes = await apiCall("POST", "/auth/login", {
+        detectRes = await raspiApiCall<FaceDetectResponse>(
+          "POST",
+          "/face/detect",
+          { image: licenseImage },
+        );
+      } catch (error) {
+        console.log("[FACE] 얼굴 검출 API 통신 실패:", error);
+        crossPlatformAlert(
+          "얼굴 인식 서버 연결 실패",
+          "얼굴 인식 서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.",
+          "확인",
+          () => {},
+        );
+        return;
+      }
+
+      // 2. 얼굴 검출 실패 시 재촬영 (회원가입 자체를 호출하지 않음)
+      if (!detectRes.data.detected) {
+        const message =
+          detectRes.data.reason === "invalid_image"
+            ? "촬영한 면허증 이미지를 처리하지 못했습니다. 다시 촬영해주세요."
+            : "면허증에서 얼굴을 찾지 못했습니다. 다시 촬영해주세요.";
+
+        crossPlatformAlert(
+          "면허증 얼굴 검출 실패",
+          message,
+          "다시 촬영",
+          goRetakePhoto,
+        );
+        return;
+      }
+
+      // 3. 얼굴 검출 성공 후에만 회원가입 (재시도 시 기존 user_id 재사용)
+      const pendingUserId = await AsyncStorage.getItem("pending_face_user_id");
+
+      let userId: number;
+
+      if (pendingUserId) {
+        userId = Number(pendingUserId);
+      } else {
+        const registerRes = await apiCall("POST", "/auth/register", {
+          name,
           email,
           password,
+          license_no: fields.licenseNo || "미인식",
+          license_expires_at: toIsoDate(fields.expiresAt) || "2030-01-01",
         });
-        if (loginRes?.data?.token) {
-          await AsyncStorage.setItem("token", loginRes.data.token);
+
+        const newUserId = registerRes?.data?.user_id;
+        if (!newUserId) {
+          throw new Error("회원가입 응답에 user_id가 없습니다.");
         }
-        if (loginRes?.data?.user) {
-          await AsyncStorage.setItem(
-            "user",
-            JSON.stringify(loginRes.data.user),
-          );
-        }
-      } catch (loginError) {
-        console.log("자동 로그인 실패:", loginError);
+        userId = newUserId;
       }
 
-      // 더 이상 필요 없는 임시 저장값 정리
+      // 4. 발급된 user_id로 얼굴 임베딩 저장
+      let faceRes: FaceRegisterResponse;
+      try {
+        faceRes = await raspiApiCall<FaceRegisterResponse>(
+          "POST",
+          "/face/register",
+          { user_id: userId, image: licenseImage },
+        );
+      } catch (error) {
+        console.log("[FACE] 얼굴 등록 API 통신 실패:", error);
+        await AsyncStorage.setItem("pending_face_user_id", String(userId));
+        crossPlatformAlert(
+          "얼굴 정보 저장 실패",
+          "회원가입은 완료됐지만 얼굴 정보를 저장하지 못했습니다. 다시 시도해주세요.",
+          "확인",
+          () => {},
+        );
+        return;
+      }
+
+      // 5. 얼굴 임베딩 저장 결과 확인
+      if (!faceRes.data.registered) {
+        await AsyncStorage.setItem("pending_face_user_id", String(userId));
+
+        const message =
+          faceRes.data.reason === "face_not_detected"
+            ? "면허증 얼굴을 다시 처리하지 못했습니다. 면허증을 다시 촬영해주세요."
+            : "얼굴 정보 저장에 실패했습니다. 다시 시도해주세요.";
+
+        crossPlatformAlert(
+          "얼굴 등록 실패",
+          message,
+          "다시 촬영",
+          goRetakePhoto,
+        );
+        return;
+      }
+
+      // 6. 얼굴 저장 성공 후에만 로그인 (실패 대비, pending_face_user_id는 로그인 성공 후에만 제거)
+      const loginRes = await apiCall("POST", "/auth/login", {
+        email,
+        password,
+      });
+
+      const token = loginRes?.data?.token;
+      if (!token || token === "mock.jwt.token") {
+        throw new Error("실제 로그인 토큰을 받지 못했습니다.");
+      }
+
+      await AsyncStorage.setItem("token", token);
+      if (loginRes?.data?.user) {
+        await AsyncStorage.setItem("user", JSON.stringify(loginRes.data.user));
+      }
+
+      // 로그인까지 전부 성공한 뒤에만 재시도용 임시값 정리
+      await AsyncStorage.removeItem("pending_face_user_id");
       await AsyncStorage.removeItem("license_image_base64");
       await AsyncStorage.removeItem("license_ocr_raw");
 
-      if (faceRegisterFailed) {
-        // 얼굴 등록 실패는 조용히 넘어가지 않고 반드시 사용자에게 알림
-        console.log("얼굴 등록 실패 사유:", faceFailReason);
-
-        if (Platform.OS === "web") {
-          // Alert.alert()는 웹에서 아무 UI도 그리지 않아 onPress가 영원히 호출되지 않음 → 웹에서는 팝업 없이 콘솔 경고만 남기고 바로 진행
-          console.warn(
-            "[얼굴 등록 실패] 회원가입은 완료됐지만 얼굴 등록에 실패했습니다. 마이페이지에서 다시 시도해주세요.",
-          );
-          router.replace("/main");
-        } else {
-          Alert.alert(
-            "얼굴 등록 실패",
-            "회원가입은 완료됐지만, 얼굴 등록에 실패했습니다.\n마이페이지에서 다시 시도해주세요.",
-            [{ text: "확인", onPress: () => router.replace("/main") }],
-          );
-        }
-      } else {
-        // 자동 로그인 완료 → 로그인 화면 대신 바로 메인으로
-        router.replace("/main");
-      }
+      router.replace("/main");
     } catch (e) {
-      console.log(e);
+      console.log("[REGISTER] 회원가입 처리 실패:", e);
+      crossPlatformAlert(
+        "회원가입 실패",
+        e instanceof Error ? e.message : "회원가입 중 오류가 발생했습니다.",
+        "확인",
+        () => {},
+      );
     } finally {
       setLoading(false);
     }
