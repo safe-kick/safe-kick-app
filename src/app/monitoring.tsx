@@ -15,7 +15,7 @@ import { RASPI_API_BASE } from '../constants/api';
 
 // ─── 타입 ────────────────────────────────────────────────
 type Phase = 'normal' | 'remeasure' | 'slowdown' | 'stopped';
-type WarningReason = 'two_person' | 'helmet_fail';
+type WarningReason = 'two_person' | 'helmet_fail' | 'drunk' | 'face_fail';
 
 interface SensorRow {
   label: string;
@@ -31,18 +31,34 @@ const MAX_SPEED = 20;
 const WARNING_TITLES: Record<WarningReason, string> = {
   two_person: '이중 탑승 감지됨',
   helmet_fail: '헬멧 미착용 감지됨',
+  drunk: '음주 감지됨',
+  face_fail: '탑승자 얼굴 인식 실패',
 };
 
 // 경고 사유 + 단계에 따른 서브 텍스트
 function getWarningSub(reason: WarningReason, phase: Phase) {
   if (phase === 'stopped') {
-    return reason === 'helmet_fail'
-      ? '완전 정지됨 — 헬멧 착용 후 재시작하세요'
-      : '완전 정지됨 — 1인 탑승 후 재시작하세요';
+    switch (reason) {
+      case 'helmet_fail':
+        return '완전 정지됨 — 헬멧 착용 후 재시작하세요';
+      case 'drunk':
+        return '완전 정지됨 — 음주 상태에서는 재시작할 수 없습니다';
+      case 'face_fail':
+        return '완전 정지됨 — 등록된 탑승자 확인 후 재시작하세요';
+      default:
+        return '완전 정지됨 — 1인 탑승 후 재시작하세요';
+    }
   }
-  return reason === 'helmet_fail'
-    ? '헬멧을 착용한 후 계속하세요'
-    : '단독 탑승 확인 시 자동 해제';
+  switch (reason) {
+    case 'helmet_fail':
+      return '헬멧을 착용한 후 계속하세요';
+    case 'drunk':
+      return '음주 상태가 해제되지 않으면 자동 정지됩니다';
+    case 'face_fail':
+      return '얼굴이 다시 인식되지 않으면 자동 정지됩니다';
+    default:
+      return '단독 탑승 확인 시 자동 해제';
+  }
 }
 
 // ─── 단계 인디케이터 ──────────────────────────────────────
@@ -163,7 +179,9 @@ function WarningBanner({ phase, reason, countdown, cdProgress }: {
     <View style={[wb.wrap, { backgroundColor: bg, borderBottomColor: borderColor }]}>
       <View style={wb.row}>
         <View style={[wb.iconBox, { backgroundColor: isDanger ? 'rgba(198,40,40,0.12)' : 'rgba(230,81,0,0.12)' }]}>
-          <Text style={{ fontSize: 16 }}>{reason === 'helmet_fail' ? '🪖' : '⚠'}</Text>
+          <Text style={{ fontSize: 16 }}>
+            {reason === 'helmet_fail' ? '🪖' : reason === 'drunk' ? '🍺' : reason === 'face_fail' ? '🚫' : '⚠'}
+          </Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={[wb.title, { color: textColor }]}>{WARNING_TITLES[reason]}</Text>
@@ -255,7 +273,7 @@ export default function MonitoringScreen() {
   const [countdown, setCountdown] = useState(REMEASURE_SEC);
   const [speed, setSpeed] = useState(MAX_SPEED);
   const cdProgress = useRef(new Animated.Value(1)).current;
-  const sessionId = 5;
+  const [kickboardId, setKickboardId] = useState('');
   const [faceScore, setFaceScore] = useState(0);
   const [weight, setWeight] = useState(0);
   const [gas, setGas] = useState(0);
@@ -264,6 +282,13 @@ export default function MonitoringScreen() {
   const [warningReason, setWarningReason] = useState<WarningReason | null>(null);
   const phaseRef = useRef<Phase>('normal');
 
+
+  // QR 스캔 시 저장해둔 실제 킥보드 ID 로드
+  useEffect(() => {
+    AsyncStorage.getItem('kickboard_id').then(id => {
+      if (id) setKickboardId(id);
+    });
+  }, []);
 
   // ─── SSE 이벤트 수신 ─────────────────────────────────────
   useEffect(() => {
@@ -309,7 +334,7 @@ export default function MonitoringScreen() {
   }, []);
 
   // mock 경고 함수
-  const triggerMockWarning = async (reason: 'two_person' | 'helmet_fail') => {
+  const triggerMockWarning = async (reason: WarningReason) => {
   try {
     const sessionId = await AsyncStorage.getItem('session_id');
 
@@ -380,6 +405,16 @@ export default function MonitoringScreen() {
     try {
       const sessionId = await AsyncStorage.getItem('session_id');
       const rideId = await AsyncStorage.getItem('ride_id');
+
+      // 종료 전에 먼저 요약 데이터를 받아둠 (session/end 이후엔 세션이 사라질 수 있음)
+      try {
+        const summaryRes = await raspiApiCall('GET', '/session/summary');
+        if (summaryRes?.data) {
+          await AsyncStorage.setItem('session_summary', JSON.stringify(summaryRes.data));
+        }
+      } catch (e) {
+        console.log('[RETURN] session/summary 조회 실패:', e);
+      }
 
       await raspiApiCall('POST', '/session/end');
 
@@ -464,7 +499,7 @@ export default function MonitoringScreen() {
       <View style={s.header}>
         <View>
           <Text style={s.headerLabel}>스쿠터 ID</Text>
-          <Text style={s.headerId}>KICK-A23F</Text>
+          <Text style={s.headerId}>{kickboardId || '-'}</Text>
         </View>
         <WFBadge label={badgeLabel} status={badgeStatus as any} />
         <View style={{ alignItems: 'flex-end' }}>
@@ -559,6 +594,18 @@ export default function MonitoringScreen() {
               onPress={() => triggerMockWarning('helmet_fail')}
             >
               <Text style={s.testBtnText}>🪖  헬멧 미착용 경고 테스트 (mock)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.testBtn}
+              onPress={() => triggerMockWarning('drunk')}
+            >
+              <Text style={s.testBtnText}>🍺  음주 감지 경고 테스트 (mock)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.testBtn}
+              onPress={() => triggerMockWarning('face_fail')}
+            >
+              <Text style={s.testBtnText}>🚫  얼굴 인식 실패 경고 테스트 (mock)</Text>
             </TouchableOpacity>
           </View>
         )}

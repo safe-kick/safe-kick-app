@@ -61,32 +61,42 @@ export default function SafetyCheckScreen() {
   const [phase, setPhase] = useState<'checking' | 'pass' | 'fail'>('checking');
 
   useEffect(() => {
-    (async () => {
-      await new Promise(r => setTimeout(r, 1200));
-      setChecks(p => p.map(c => c.label.includes('헬멧') ? { ...c, status: 'ok', value: '착용' } : c));
-      await new Promise(r => setTimeout(r, 1000));
-      setChecks(p => p.map(c => c.label.includes('음주') ? { ...c, status: 'ok', value: '0.02 ppm' } : c));
-      await new Promise(r => setTimeout(r, 1000));
-      setChecks(p => p.map(c => c.label.includes('탑승') ? { ...c, status: 'ok', value: '1명' } : c));
-      await new Promise(r => setTimeout(r, 800));
-      setChecks(p => p.map(c => c.label.includes('잠금') ? { ...c, status: 'ok' } : c));
-      setPhase('pass');
-    })();
+    runChecks();
   }, []);
+
+  const runChecks = async () => {
+    setPhase('checking');
+    setChecks(p => p.map(c => c.label === '얼굴 인증' ? c : { ...c, status: 'checking', value: undefined }));
+
+    await new Promise(r => setTimeout(r, 1200));
+    setChecks(p => p.map(c => c.label.includes('헬멧') ? { ...c, status: 'ok', value: '착용' } : c));
+    await new Promise(r => setTimeout(r, 1000));
+    setChecks(p => p.map(c => c.label.includes('음주') ? { ...c, status: 'ok', value: '0.02 ppm' } : c));
+    await new Promise(r => setTimeout(r, 1000));
+    setChecks(p => p.map(c => c.label.includes('탑승') ? { ...c, status: 'ok', value: '1명' } : c));
+    await new Promise(r => setTimeout(r, 800));
+    setChecks(p => p.map(c => c.label.includes('잠금') ? { ...c, status: 'ok' } : c));
+    setPhase('pass');
+  };
 
   const startRide = async () => {
     try {
       const kickboardId = await AsyncStorage.getItem('kickboard_id');
       const faceVectorStr = await AsyncStorage.getItem('face_vector');
+      const userJson = await AsyncStorage.getItem('user');
+      const user = userJson ? JSON.parse(userJson) : null;
 
       if (!kickboardId || !faceVectorStr) {
         throw new Error('운행 시작 정보가 없습니다.');
+      }
+      if (!user?.id) {
+        throw new Error('로그인 정보가 없습니다.');
       }
 
       const faceVector = JSON.parse(faceVectorStr);
 
       const sessionRes = await raspiApiCall('POST', '/session/start', {
-        user_id: 1,
+        user_id: user.id,
         kickboard_id: kickboardId,
         face_vector: faceVector,
       });
@@ -110,12 +120,9 @@ export default function SafetyCheckScreen() {
     }
   };
 
-
-
   const allPass = phase === 'pass';
   const anyFail = phase === 'fail';
 
-  // 어떤 항목이 실패했는지 구분 (실패 메시지 분기용)
   const helmetCheck = checks.find(c => c.label.includes('헬멧'));
   const alcoholCheck = checks.find(c => c.label.includes('음주'));
   const helmetFail = helmetCheck?.status === 'fail';
@@ -126,7 +133,6 @@ export default function SafetyCheckScreen() {
       <TopBar title="안전 점검" back onBack={() => router.back()} />
       <ScrollView contentContainerStyle={s.content}>
 
-        {/* 연결된 스쿠터 */}
         <View style={s.scooterRow}>
           <View style={s.scooterIcon} />
           <View style={{ flex: 1 }}>
@@ -136,12 +142,10 @@ export default function SafetyCheckScreen() {
           <WFBadge label="연결됨" status="info" />
         </View>
 
-        {/* 체크 리스트 */}
         <WFCard style={{ padding: 0, paddingHorizontal: 16, paddingTop: 4 }}>
           {checks.map((c, i) => <CheckRow key={i} {...c} />)}
         </WFCard>
 
-        {/* 상태 메시지 */}
         {!allPass && !anyFail && (
           <View style={[s.msgBox, { backgroundColor: T.infoBg, borderColor: 'rgba(21,101,192,0.2)' }]}>
             <Text style={[s.msgText, { color: T.info }]}>
@@ -157,7 +161,7 @@ export default function SafetyCheckScreen() {
                   ? '헬멧 미착용이 감지되어 운행이 제한됩니다.'
                   : alcoholFail
                   ? '음주가 감지되어 운행이 제한됩니다.'
-                  : '2인 탑승이 감지되어 운행이 제한됩니다. 1인만 탑승 후 다시 시도하세요.'}
+                  : '운행 시작에 실패했습니다. 다시 시도해주세요.'}
               </Text>
             </View>
             {helmetFail && (
@@ -176,23 +180,18 @@ export default function SafetyCheckScreen() {
           </View>
         )}
 
-        {/* ── CTA 버튼 영역 ── */}
         {allPass ? (
           <View style={s.readyBox}>
             <Text style={s.readyTitle}>운행 준비 완료</Text>
             <Text style={s.readySub}>모든 안전 점검을 통과했습니다</Text>
-            {/* 버튼을 TouchableOpacity로 감싸고 width: '100%' 명시 */}
-            <TouchableOpacity
-              style={s.startBtn}
-              onPress={startRide}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={s.startBtn} onPress={startRide} activeOpacity={0.8}>
               <Text style={s.startBtnText}>⚡  라이딩 시작</Text>
             </TouchableOpacity>
           </View>
         ) : anyFail ? (
           <View style={s.btnGroup}>
-            <TouchableOpacity style={s.retryBtn}>
+            {/* onPress 누락되어 있던 버그 수정 — 다시 점검 실행되도록 */}
+            <TouchableOpacity style={s.retryBtn} onPress={runChecks}>
               <Text style={s.retryBtnText}>↺  다시 시도</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.cancelBtn} onPress={() => router.replace('/main')}>
@@ -200,7 +199,6 @@ export default function SafetyCheckScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          /* 점검 중 — 비활성 버튼도 동일한 크기 */
           <View style={s.disabledBtn}>
             <Text style={s.disabledBtnText}>점검 중...</Text>
           </View>
@@ -213,7 +211,6 @@ export default function SafetyCheckScreen() {
 
 const s = StyleSheet.create({
   content: { padding: 20, gap: 16, paddingBottom: 40 },
-
   scooterRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     padding: 12, backgroundColor: T.bgAlt,
@@ -222,39 +219,21 @@ const s = StyleSheet.create({
   scooterIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: T.fill },
   scooterLabel: { fontSize: 12, color: T.textMuted },
   scooterId: { fontSize: 15, fontWeight: '700', color: T.text },
-
   msgBox: { padding: 14, borderRadius: 12, borderWidth: 1 },
   msgText: { fontSize: 13, lineHeight: 20 },
-
-  // ── 운행 준비 완료 영역 ──
   readyBox: { alignItems: 'center', gap: 8 },
   readyTitle: { fontSize: 18, fontWeight: '700', color: T.text },
   readySub: { fontSize: 13, color: T.textMuted },
-
-  // 라이딩 시작 버튼 — width: '100%' 핵심
   startBtn: {
-    width: '100%',          // ← 이게 핵심! 부모 너비 꽉 채움
-    height: 52,
-    backgroundColor: T.text,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
+    width: '100%', height: 52, backgroundColor: T.text,
+    borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 4,
   },
   startBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
-
-  // 점검 중 비활성
   disabledBtn: {
-    width: '100%',
-    height: 52,
-    backgroundColor: T.fillMed,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: '100%', height: 52, backgroundColor: T.fillMed,
+    borderRadius: 12, alignItems: 'center', justifyContent: 'center',
   },
   disabledBtnText: { color: T.textMuted, fontSize: 15, fontWeight: '600' },
-
-  // 실패 버튼들
   btnGroup: { gap: 10 },
   retryBtn: {
     width: '100%', height: 48, backgroundColor: T.fill,

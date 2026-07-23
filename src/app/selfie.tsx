@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  Alert,
 } from "react-native";
 import { router } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -68,6 +69,18 @@ export default function SelfieScreen() {
         return;
       }
 
+      // QR을 거치지 않고 이 화면에 들어온 경우(뒤로가기 등) 방지
+      const kickboardId = await AsyncStorage.getItem("kickboard_id");
+      if (!kickboardId) {
+        Alert.alert(
+          "킥보드 정보 없음",
+          "QR 코드를 먼저 스캔해주세요.",
+          [{ text: "확인", onPress: () => router.replace("/qr-scan") }],
+          { cancelable: false },
+        );
+        return;
+      }
+
       await AsyncStorage.setItem(
         "face_vector",
         JSON.stringify(res.data.face_vector),
@@ -111,7 +124,6 @@ export default function SelfieScreen() {
           <View style={{ width: 36 }} />
         </View>
         <View style={s.cameraArea}>
-          {/* 실제 전면 카메라 — 네이티브 + 권한 허용 시에만 렌더, 웹은 기존 플레이스홀더 유지 */}
           {Platform.OS !== "web" && permission?.granted && (
             <CameraView
               ref={cameraRef}
