@@ -313,13 +313,18 @@ main.tsx → qr-scan.tsx
   → GET /status (라파 연결 확인) 통과 시 다음 화면
   ↓
 selfie.tsx
-  → POST /face/verify (라파 1순위, 실패 시 Node mock 폴백)
-  → match 성공 + kickboard_id 존재 확인 → face_vector 저장
+  → POST /session/start (라파, user_id+kickboard_id) → session_id 저장
+  → POST /face/verify (라파 실제 인증, Node mock 폴백 없음)
+  → match 성공 시 라파 안전 상태 머신 시작 → face_vector 저장
   ↓
 safety-check.tsx
-  → 헬멧/음주/탑승인원 점검
-  → 통과 시: POST /session/start (라파, user_id+face_vector) + POST /rides/start (Node)
-  → session_id, ride_id 저장 → monitoring.tsx로 이동
+  → SSE(/session/stream)로 safety_state와 실제 STM32 센서 결과 수신
+  → 헬멧은 센서 구현 전까지 임시 자동 통과
+  → checking_alcohol 동안 음주 측정 결과 대기
+  → waiting_rider 수신 시 POST /session/weight-check를 한 번 호출
+  → checking_rider → unlocking → monitoring 순서로 탑승 인원 및 잠금 해제 확인
+  → monitoring + is_locked=false일 때만 안전점검 통과
+  → 라이딩 시작 시 POST /rides/start (Node) → ride_id 저장
   ↓
 monitoring.tsx
   → SSE(/session/stream)로 실시간 얼굴점수/무게/가스/잠금상태 수신

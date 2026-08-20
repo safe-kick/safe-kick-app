@@ -13,7 +13,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { T } from "../constants/colors";
 import { TopBar, WFCard, WFBadge } from "../components/ui";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { apiCall, raspiApiCall } from "../utils/api";
+import { raspiApiCall } from "../utils/api";
 
 type Step = "capture" | "verifying" | "success" | "fail";
 
@@ -44,32 +44,6 @@ export default function SelfieScreen() {
         return;
       }
 
-      let res;
-
-      try {
-        // 1순위: 라즈베리파이 실제 얼굴 인증
-        res = await raspiApiCall("POST", "/face/verify", {
-          user_id: user.id,
-          image: base64,
-        });
-
-        console.log("[FACE] Raspberry Pi 얼굴 인증 사용");
-      } catch (raspiError) {
-        // 2순위: 라즈베리파이 없으면 Node mock 얼굴 인증
-        console.log("[FACE] Raspberry Pi 연결 실패 → Node mock 얼굴 인증 사용");
-
-        res = await apiCall("POST", "/auth/face-verify", {
-          user_id: user.id,
-          image: base64,
-        });
-      }
-
-      if (!res?.data?.match) {
-        setStep("fail");
-        return;
-      }
-
-      // QR을 거치지 않고 이 화면에 들어온 경우(뒤로가기 등) 방지
       const kickboardId = await AsyncStorage.getItem("kickboard_id");
       if (!kickboardId) {
         Alert.alert(
@@ -78,6 +52,27 @@ export default function SelfieScreen() {
           [{ text: "확인", onPress: () => router.replace("/qr-scan") }],
           { cancelable: false },
         );
+        return;
+      }
+
+      let sessionId = await AsyncStorage.getItem("session_id");
+      if (!sessionId) {
+        const sessionRes = await raspiApiCall("POST", "/session/start", {
+          user_id: user.id,
+          kickboard_id: kickboardId,
+        });
+        sessionId = String(sessionRes.data.session_id);
+        await AsyncStorage.setItem("session_id", sessionId);
+      }
+
+      // 실제 라즈베리파이 얼굴 인증 성공 이벤트가 안전 상태 머신을 시작한다.
+      const res = await raspiApiCall("POST", "/face/verify", {
+        user_id: user.id,
+        image: base64,
+      });
+
+      if (!res?.data?.match) {
+        setStep("fail");
         return;
       }
 

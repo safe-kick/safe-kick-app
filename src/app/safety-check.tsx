@@ -1,13 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { T } from '../constants/colors';
 import { TopBar, WFCard, WFBadge } from '../components/ui';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import EventSource from 'react-native-sse';
 import { apiCall, raspiApiCall } from '../utils/api';
+import { RASPI_API_BASE } from '../constants/api';
 
 type S = 'done' | 'checking' | 'ok' | 'fail';
 interface CheckItem { label: string; status: S; value?: string }
+
+interface SafetySensorData {
+  gas?: number;
+  weight?: number;
+  is_drunk?: boolean;
+  is_two_person?: boolean;
+  is_locked?: boolean;
+  status?: string;
+  warning_reason?: string | null;
+  safety_state?: 'starting' | 'locked' | 'checking_alcohol' | 'waiting_rider' | 'checking_rider' | 'unlocking' | 'monitoring' | 'warning' | 'fault';
+  stm32_connected?: boolean;
+}
 
 function CheckRow({ label, status, value }: CheckItem) {
   const isDone = status === 'done';
@@ -59,49 +73,130 @@ export default function SafetyCheckScreen() {
     { label: '잠금 상태', status: 'checking' },
   ]);
   const [phase, setPhase] = useState<'checking' | 'pass' | 'fail'>('checking');
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const runIdRef = useRef(0);
 
   useEffect(() => {
     runChecks();
+
+    return () => {
+      runIdRef.current += 1;
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+    };
   }, []);
 
   const runChecks = async () => {
+    const runId = ++runIdRef.current;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
     setPhase('checking');
-    setChecks(p => p.map(c => c.label === '얼굴 인증' ? c : { ...c, status: 'checking', value: undefined }));
+    setChecks(p => p.map(c => {
+      if (c.label === '얼굴 인증') return c;
+      if (c.label.includes('헬멧')) return { ...c, status: 'ok', value: '착용' };
+      return { ...c, status: 'checking', value: undefined };
+    }));
 
-    await new Promise(r => setTimeout(r, 1200));
-    setChecks(p => p.map(c => c.label.includes('헬멧') ? { ...c, status: 'ok', value: '착용' } : c));
-    await new Promise(r => setTimeout(r, 1000));
-    setChecks(p => p.map(c => c.label.includes('음주') ? { ...c, status: 'ok', value: '0.02 ppm' } : c));
-    await new Promise(r => setTimeout(r, 1000));
-    setChecks(p => p.map(c => c.label.includes('탑승') ? { ...c, status: 'ok', value: '1명' } : c));
-    await new Promise(r => setTimeout(r, 800));
-    setChecks(p => p.map(c => c.label.includes('잠금') ? { ...c, status: 'ok' } : c));
-    setPhase('pass');
+    try {
+      const sessionId = await AsyncStorage.getItem('session_id');
+      const userJson = await AsyncStorage.getItem('user');
+      const user = userJson ? JSON.parse(userJson) : null;
+      if (!sessionId || !user?.id) throw new Error('활성 안전점검 세션이 없습니다.');
+
+      const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
+      eventSourceRef.current = eventSource;
+      let finished = false;
+      let weightCheckRequested = false;
+
+      eventSource.addEventListener('message', (event) => {
+        if (runId !== runIdRef.current || !event.data) return;
+
+        try {
+          const data: SafetySensorData = JSON.parse(event.data);
+          const safetyState = data.safety_state;
+          const alcoholFail = data.is_drunk === true || data.warning_reason === 'drunk';
+          const passengerFail = data.is_two_person === true || data.warning_reason === 'two_person';
+          const hardwareFail = safetyState === 'fault' || data.stm32_connected === false;
+          const alcoholPassed = ['waiting_rider', 'checking_rider', 'unlocking', 'monitoring'].includes(safetyState ?? '');
+          const passengerPassed = ['unlocking', 'monitoring'].includes(safetyState ?? '');
+          const unlocked = safetyState === 'monitoring' && data.is_locked === false;
+
+          if (safetyState === 'waiting_rider' && !weightCheckRequested) {
+            weightCheckRequested = true;
+            raspiApiCall('POST', '/session/weight-check', { user_id: user.id })
+              .then(res => {
+                if (!res?.data?.accepted) {
+                  throw new Error(res?.message || '탑승 인원 측정을 시작하지 못했습니다.');
+                }
+              })
+              .catch(e => {
+                if (finished || runId !== runIdRef.current) return;
+                finished = true;
+                console.log('[SAFETY CHECK] 탑승 인원 측정 시작 실패:', e);
+                eventSource.close();
+                eventSourceRef.current = null;
+                setPhase('fail');
+              });
+          }
+
+          setChecks(p => p.map(c => {
+            if (c.label.includes('음주')) {
+              if (alcoholFail) return { ...c, status: 'fail', value: `${data.gas ?? 0} ppm` };
+              if (alcoholPassed) return { ...c, status: 'ok', value: `${data.gas ?? 0} ppm` };
+              return { ...c, status: 'checking', value: data.gas !== undefined ? `${data.gas} ppm` : undefined };
+            }
+            if (c.label.includes('탑승')) {
+              if (passengerFail) return { ...c, status: 'fail', value: '2명 이상' };
+              if (passengerPassed) return { ...c, status: 'ok', value: '1명' };
+              return { ...c, status: 'checking', value: data.weight !== undefined ? `${data.weight} kg` : undefined };
+            }
+            if (c.label.includes('잠금')) {
+              if (hardwareFail) return { ...c, status: 'fail', value: '장치 오류' };
+              if (unlocked) return { ...c, status: 'ok', value: '해제' };
+              return { ...c, status: 'checking', value: data.is_locked ? '잠김' : '해제 중' };
+            }
+            return c;
+          }));
+
+          if (alcoholFail || passengerFail || hardwareFail) {
+            finished = true;
+            setPhase('fail');
+            eventSource.close();
+            eventSourceRef.current = null;
+            return;
+          }
+
+          if (unlocked && !data.is_drunk && !data.is_two_person) {
+            finished = true;
+            setPhase('pass');
+            eventSource.close();
+            eventSourceRef.current = null;
+          }
+        } catch (e) {
+          console.log('[SAFETY CHECK] 센서 데이터 파싱 실패:', e);
+        }
+      });
+
+      eventSource.addEventListener('error', () => {
+        if (finished || runId !== runIdRef.current) return;
+        eventSource.close();
+        eventSourceRef.current = null;
+        setPhase('fail');
+      });
+    } catch (e) {
+      console.log('[SAFETY CHECK] 점검 시작 실패:', e);
+      if (runId === runIdRef.current) setPhase('fail');
+    }
   };
 
   const startRide = async () => {
     try {
       const kickboardId = await AsyncStorage.getItem('kickboard_id');
-      const faceVectorStr = await AsyncStorage.getItem('face_vector');
-      const userJson = await AsyncStorage.getItem('user');
-      const user = userJson ? JSON.parse(userJson) : null;
+      const sessionId = await AsyncStorage.getItem('session_id');
 
-      if (!kickboardId || !faceVectorStr) {
+      if (!kickboardId || !sessionId) {
         throw new Error('운행 시작 정보가 없습니다.');
       }
-      if (!user?.id) {
-        throw new Error('로그인 정보가 없습니다.');
-      }
-
-      const faceVector = JSON.parse(faceVectorStr);
-
-      const sessionRes = await raspiApiCall('POST', '/session/start', {
-        user_id: user.id,
-        kickboard_id: kickboardId,
-        face_vector: faceVector,
-      });
-
-      const sessionId = sessionRes.data.session_id;
 
       const rideRes = await apiCall('POST', '/rides/start', {
         kickboard_id: kickboardId,
@@ -110,7 +205,6 @@ export default function SafetyCheckScreen() {
 
       const rideId = rideRes.data.ride_id;
 
-      await AsyncStorage.setItem('session_id', String(sessionId));
       await AsyncStorage.setItem('ride_id', String(rideId));
 
       router.replace('/monitoring');

@@ -239,7 +239,7 @@ const wb = StyleSheet.create({
 
 // ─── 감속 패널 ────────────────────────────────────────────
 function SlowdownPanel({ speed }: { speed: number }) {
-  const pct = (speed / MAX_SPEED * 100).toFixed(0);
+  const pct = Math.round(speed / MAX_SPEED * 100);
   return (
     <View style={sp.wrap}>
       <View style={sp.row}>
@@ -247,7 +247,7 @@ function SlowdownPanel({ speed }: { speed: number }) {
         <Text style={sp.speed}>{speed} <Text style={{ fontSize: 12 }}>km/h</Text></Text>
       </View>
       <View style={sp.barBg}>
-        <View style={[sp.barFill, { width: `${pct}%` }]} />
+        <View style={[sp.barFill, { width: `${pct}%` as `${number}%` }]} />
       </View>
     </View>
   );
@@ -569,7 +569,7 @@ export default function MonitoringScreen() {
             ]}>
               <WFBadge
                 label={row.status === 'ok' ? '정상' : row.status === 'warn' ? '경고' : '연결됨'}
-                status={row.status === 'err' ? 'err' : row.status}
+                status={row.status}
               />
               <Text style={s.sensorLabel}>{row.label}</Text>
               <Text style={[
