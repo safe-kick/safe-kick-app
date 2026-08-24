@@ -234,6 +234,7 @@ export async function raspiApiCall<T = any>(
   method: "GET" | "POST" | "PATCH",
   path: string,
   body?: object,
+  signal?: AbortSignal,
 ): Promise<T> {
   const res = await fetch(`${RASPI_API_BASE}${path}`, {
     method,
@@ -241,7 +242,7 @@ export async function raspiApiCall<T = any>(
       "Content-Type": "application/json",
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(10000),
+    signal: signal ?? AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {

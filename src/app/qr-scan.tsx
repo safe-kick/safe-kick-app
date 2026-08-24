@@ -122,7 +122,13 @@ export default function QRScanScreen() {
     setError("");
     try {
       await AsyncStorage.setItem("kickboard_id", kickboardId);
-      await AsyncStorage.removeItem("session_id");
+      await AsyncStorage.multiRemove([
+        "session_id",
+        "face_verified",
+        "helmet_verified",
+        "face_score",
+        "helmet_score",
+      ]);
       const res = await raspiApiCall("GET", "/status");
       if (res?.status !== "success") throw new Error("연결 실패");
       router.push("/selfie");

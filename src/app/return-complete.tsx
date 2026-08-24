@@ -39,6 +39,10 @@ export default function ReturnCompleteScreen() {
           'session_id',
           'ride_id',
           'face_vector',
+          'face_verified',
+          'helmet_verified',
+          'face_score',
+          'helmet_score',
         ]);
       }
     })();

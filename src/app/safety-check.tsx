@@ -91,17 +91,30 @@ export default function SafetyCheckScreen() {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     setPhase('checking');
-    setChecks(p => p.map(c => {
-      if (c.label === '얼굴 인증') return c;
-      if (c.label.includes('헬멧')) return { ...c, status: 'ok', value: '착용' };
-      return { ...c, status: 'checking', value: undefined };
-    }));
-
     try {
-      const sessionId = await AsyncStorage.getItem('session_id');
-      const userJson = await AsyncStorage.getItem('user');
+      const [sessionId, userJson, faceVerified, helmetVerified] = await Promise.all([
+        AsyncStorage.getItem('session_id'),
+        AsyncStorage.getItem('user'),
+        AsyncStorage.getItem('face_verified'),
+        AsyncStorage.getItem('helmet_verified'),
+      ]);
       const user = userJson ? JSON.parse(userJson) : null;
       if (!sessionId || !user?.id) throw new Error('활성 안전점검 세션이 없습니다.');
+
+      const identityPassed = faceVerified === 'true' && helmetVerified === 'true';
+      setChecks(p => p.map(c => {
+        if (c.label === '얼굴 인증') {
+          return { ...c, status: faceVerified === 'true' ? 'done' : 'fail', value: faceVerified === 'true' ? '완료' : '미인증' };
+        }
+        if (c.label.includes('헬멧')) {
+          return { ...c, status: helmetVerified === 'true' ? 'ok' : 'fail', value: helmetVerified === 'true' ? '착용' : '미인증' };
+        }
+        return { ...c, status: 'checking', value: undefined };
+      }));
+      if (!identityPassed) {
+        setPhase('fail');
+        return;
+      }
 
       const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
       eventSourceRef.current = eventSource;
