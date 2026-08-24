@@ -141,9 +141,9 @@ export default function SelfieScreen() {
           setMessage("얼굴과 헬멧 인증이 완료되었습니다.");
           setSuccess(true);
         }
-      } else if (!data.face_verified && !data.helmet_verified) setMessage("얼굴과 헬멧을 확인해주세요.");
-      else if (!data.face_verified) setMessage("얼굴을 정면으로 바라봐 주세요.");
-      else setMessage("헬멧을 착용해주세요.");
+      } else if (!data.face_verified) setMessage("얼굴이 검출되지 않았습니다.");
+      else if (!data.helmet_verified) setMessage("헬멧을 착용하세요.");
+      else setMessage("인증 서버 연결이 불안정합니다. 자동으로 다시 시도합니다.");
     } catch (error) {
       if (!controller.signal.aborted && mountedRef.current && !completedRef.current) {
         console.log("[LIVE VERIFY] 자동 인증 실패:", error);
