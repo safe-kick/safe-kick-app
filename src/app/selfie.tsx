@@ -22,8 +22,25 @@ interface LiveVerifyResponse {
   };
 }
 
-const statusLabel = (value: VerificationState) =>
-  value === null ? "검사 중..." : value ? "✅" : "❌";
+const statusLabel = (type: "face" | "helmet", value: VerificationState) => {
+  if (value === null) return "검사 중...";
+  if (type === "face") return value ? "얼굴 인증 성공" : "얼굴 인증 실패";
+  return value ? "헬멧 착용 확인" : "헬멧 착용 확인 불가";
+};
+
+const statusColor = (value: VerificationState) => {
+  if (value === null) return "rgba(255,255,255,0.8)";
+  return value ? "#4ADE80" : "#FF5B5B";
+};
+
+const isConnectionError = (error: unknown) => {
+  if (error instanceof TypeError) return true;
+  if (!(error instanceof Error)) return false;
+  return (
+    error.name === "TimeoutError" ||
+    /network request failed|fetch failed|failed to connect|timed?\s*out/i.test(error.message)
+  );
+};
 
 export default function SelfieScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -129,6 +146,7 @@ export default function SelfieScreen() {
       setHelmetVerified(data.helmet_verified === true);
       setFaceScore(data.face_score);
       setHelmetScore(data.helmet_score);
+      setMessage("");
       const passed = data.verified === true && data.face_verified === true && data.helmet_verified === true;
 
       if (passed) {
@@ -141,13 +159,15 @@ export default function SelfieScreen() {
           setMessage("얼굴과 헬멧 인증이 완료되었습니다.");
           setSuccess(true);
         }
-      } else if (!data.face_verified) setMessage("얼굴이 검출되지 않았습니다.");
-      else if (!data.helmet_verified) setMessage("헬멧을 착용하세요.");
-      else setMessage("인증 서버 연결이 불안정합니다. 자동으로 다시 시도합니다.");
+      }
     } catch (error) {
       if (!controller.signal.aborted && mountedRef.current && !completedRef.current) {
         console.log("[LIVE VERIFY] 자동 인증 실패:", error);
-        setMessage("인증 서버 연결이 불안정합니다. 자동으로 다시 시도합니다.");
+        setMessage(
+          isConnectionError(error)
+            ? "인증 서버 연결이 불안정합니다. 자동으로 다시 시도합니다."
+            : "인증 처리 중 오류가 발생했습니다. 자동으로 다시 시도합니다.",
+        );
       }
     } finally {
       if (requestControllerRef.current === controller) requestControllerRef.current = null;
@@ -194,9 +214,9 @@ export default function SelfieScreen() {
         />}
         <View style={s.faceOval}>{!showCamera && <Text style={s.faceIcon}>👤</Text>}<View style={s.greenScan} /></View>
         <View style={s.statusPanel}>
-          <View style={s.statusRow}><Text style={s.statusTitle}>얼굴 인증</Text><Text style={s.statusValue}>{statusLabel(faceVerified)}</Text></View>
+          <View style={s.statusRow}><Text style={s.statusTitle}>얼굴 인증</Text><Text style={[s.statusValue, { color: statusColor(faceVerified) }]}>{statusLabel("face", faceVerified)}</Text></View>
           {faceScore !== undefined && <Text style={s.score}>score {faceScore.toFixed(3)}</Text>}
-          <View style={s.statusRow}><Text style={s.statusTitle}>헬멧 착용</Text><Text style={s.statusValue}>{statusLabel(helmetVerified)}</Text></View>
+          <View style={s.statusRow}><Text style={s.statusTitle}>헬멧 착용</Text><Text style={[s.statusValue, { color: statusColor(helmetVerified) }]}>{statusLabel("helmet", helmetVerified)}</Text></View>
           {helmetScore !== undefined && <Text style={s.score}>score {helmetScore.toFixed(3)}</Text>}
         </View>
         <Text style={s.faceSub} accessibilityLiveRegion="polite">{message}</Text>
