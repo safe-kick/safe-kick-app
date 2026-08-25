@@ -8,7 +8,8 @@ import { T } from "../constants/colors";
 import { USE_MOCK } from "../constants/api";
 import { raspiApiCall } from "../utils/api";
 
-const VERIFY_INTERVAL_MS = 333;
+// About every 7 camera frames at 30 fps.
+const VERIFY_INTERVAL_MS = 233;
 type VerificationState = boolean | null;
 
 interface LiveVerifyResponse {
