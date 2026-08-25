@@ -11,7 +11,8 @@
       "icon": "./assets/expo.icon",
       "infoPlist": {
         "NSCameraUsageDescription": "QR 스캔, 본인 인증(셀피), 면허증 촬영을 위해 카메라가 필요합니다."
-      }
+      },
+      "bundleIdentifier": "com.anonymous.safekickapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -50,8 +51,8 @@
           "recordAudioAndroid": false
         }
       ],
-       [
-    "expo-build-properties",
+      [
+        "expo-build-properties",
         {
           "android": {
             "usesCleartextTraffic": true
