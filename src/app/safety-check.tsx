@@ -120,10 +120,15 @@ export default function SafetyCheckScreen() {
 
     const fail = (info: FailureInfo, context?: Record<string, unknown>) => {
       if (runId !== runIdRef.current) return;
-      console.error(`[SAFETY CHECK][${info.code}] ${info.message}`, {
-        detail: info.detail,
+      const logContext = {
+        ...(info.detail ? { detail: info.detail } : {}),
         ...context,
-      });
+      };
+      if (info.code === 'ALCOHOL_DETECTED' || info.code === 'TWO_PERSON_DETECTED') {
+        console.warn(`[SAFETY CHECK][${info.code}] ${info.message}`, logContext);
+      } else {
+        console.error(`[SAFETY CHECK][${info.code}] ${info.message}`, logContext);
+      }
       setFailure(info);
       setPhase('fail');
     };
