@@ -23,6 +23,12 @@ interface LiveVerifyResponse {
   };
 }
 
+interface AlcoholCheckResponse {
+  status: string;
+  data: { accepted: boolean; safety_state?: string };
+  message?: string;
+}
+
 const statusLabel = (type: "face" | "helmet", value: VerificationState) => {
   if (value === null) return "검사 중...";
   if (type === "face") return value ? "얼굴 인증 성공" : "얼굴 인증 실패";
@@ -53,6 +59,8 @@ export default function SelfieScreen() {
   const [faceScore, setFaceScore] = useState<number>();
   const [helmetScore, setHelmetScore] = useState<number>();
   const [message, setMessage] = useState("카메라를 준비하고 있습니다.");
+  const [alcoholStarting, setAlcoholStarting] = useState(false);
+  const [alcoholStartError, setAlcoholStartError] = useState("");
   const cameraRef = useRef<CameraView>(null);
   const mountedRef = useRef(true);
   const processingRef = useRef(false);
@@ -182,15 +190,47 @@ export default function SelfieScreen() {
     return () => clearInterval(timer);
   }, [sessionReady, success, verifyCurrentFrame]);
 
+  const startAlcoholTest = async () => {
+    if (alcoholStarting || !userIdRef.current) return;
+    setAlcoholStarting(true);
+    setAlcoholStartError("");
+    try {
+      console.info("[ALCOHOL CHECK][REQUESTED] 음주 측정 시작을 요청합니다.", { userId: userIdRef.current });
+      const response = await raspiApiCall<AlcoholCheckResponse>(
+        "POST",
+        "/session/alcohol-check",
+        { user_id: userIdRef.current },
+      );
+      if (!response?.data?.accepted) {
+        throw new Error(response?.message || "음주 측정 시작 요청이 거절되었습니다.");
+      }
+      console.info("[ALCOHOL CHECK][STARTED] STM32에 CHECK_MQ3 명령이 전달되었습니다.", {
+        safetyState: response.data.safety_state,
+      });
+      router.push("/safety-check");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("[ALCOHOL CHECK][START_FAILED] 음주 측정을 시작하지 못했습니다.", { detail });
+      setAlcoholStartError(detail);
+    } finally {
+      if (mountedRef.current) setAlcoholStarting(false);
+    }
+  };
+
   if (success) return (
     <View style={{ flex: 1, backgroundColor: T.bg }}>
       <TopBar title="인증 결과" />
       <View style={s.resultContainer}>
         <View style={[s.resultIcon, { backgroundColor: T.okBg }]}><Text style={{ fontSize: 44 }}>✅</Text></View>
         <Text style={s.resultTitle}>본인 및 헬멧 확인 완료</Text>
-        <Text style={s.resultSub}>안전 점검을 계속 진행합니다.</Text>
-        <TouchableOpacity style={s.nextBtn} onPress={() => router.push("/safety-check")}>
-          <Text style={s.nextBtnText}>안전 점검 진행 →</Text>
+        <Text style={s.resultSub}>버튼을 누르면 음주 측정을 시작합니다.</Text>
+        {alcoholStartError ? <Text style={[s.resultSub, { color: T.err }]}>{alcoholStartError}</Text> : null}
+        <TouchableOpacity
+          style={[s.nextBtn, alcoholStarting && { opacity: 0.55 }]}
+          onPress={startAlcoholTest}
+          disabled={alcoholStarting}
+        >
+          <Text style={s.nextBtnText}>{alcoholStarting ? "음주테스트 시작 중..." : "음주테스트 하기"}</Text>
         </TouchableOpacity>
       </View>
     </View>

@@ -11,6 +11,30 @@ import { RASPI_API_BASE } from '../constants/api';
 type S = 'done' | 'checking' | 'ok' | 'fail';
 interface CheckItem { label: string; status: S; value?: string }
 
+type FailureCode =
+  | 'IDENTITY_FAILED'
+  | 'SESSION_MISSING'
+  | 'CHECK_INITIALIZATION_FAILED'
+  | 'SSE_CONNECTION_FAILED'
+  | 'SENSOR_DATA_INVALID'
+  | 'STM32_DISCONNECTED'
+  | 'SAFETY_FAULT'
+  | 'ALCOHOL_DETECTED'
+  | 'TWO_PERSON_DETECTED'
+  | 'WEIGHT_CHECK_START_FAILED'
+  | 'RIDE_INFO_MISSING'
+  | 'RIDE_START_API_FAILED'
+  | 'RIDE_RESPONSE_INVALID';
+
+interface FailureInfo {
+  code: FailureCode;
+  message: string;
+  detail?: string;
+}
+
+const errorDetail = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
 interface SafetySensorData {
   gas?: number;
   weight?: number;
@@ -73,6 +97,7 @@ export default function SafetyCheckScreen() {
     { label: '잠금 상태', status: 'checking' },
   ]);
   const [phase, setPhase] = useState<'checking' | 'pass' | 'fail'>('checking');
+  const [failure, setFailure] = useState<FailureInfo | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const runIdRef = useRef(0);
 
@@ -91,6 +116,18 @@ export default function SafetyCheckScreen() {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     setPhase('checking');
+    setFailure(null);
+
+    const fail = (info: FailureInfo, context?: Record<string, unknown>) => {
+      if (runId !== runIdRef.current) return;
+      console.error(`[SAFETY CHECK][${info.code}] ${info.message}`, {
+        detail: info.detail,
+        ...context,
+      });
+      setFailure(info);
+      setPhase('fail');
+    };
+
     try {
       const [sessionId, userJson, faceVerified, helmetVerified] = await Promise.all([
         AsyncStorage.getItem('session_id'),
@@ -99,7 +136,13 @@ export default function SafetyCheckScreen() {
         AsyncStorage.getItem('helmet_verified'),
       ]);
       const user = userJson ? JSON.parse(userJson) : null;
-      if (!sessionId || !user?.id) throw new Error('활성 안전점검 세션이 없습니다.');
+      if (!sessionId || !user?.id) {
+        fail({
+          code: 'SESSION_MISSING',
+          message: '활성 안전점검 세션 또는 로그인 정보가 없습니다.',
+        }, { hasSessionId: Boolean(sessionId), hasUserId: Boolean(user?.id) });
+        return;
+      }
 
       const identityPassed = faceVerified === 'true' && helmetVerified === 'true';
       setChecks(p => p.map(c => {
@@ -112,7 +155,10 @@ export default function SafetyCheckScreen() {
         return { ...c, status: 'checking', value: undefined };
       }));
       if (!identityPassed) {
-        setPhase('fail');
+        fail({
+          code: 'IDENTITY_FAILED',
+          message: '얼굴 또는 헬멧 인증이 완료되지 않았습니다.',
+        }, { faceVerified, helmetVerified });
         return;
       }
 
@@ -120,6 +166,13 @@ export default function SafetyCheckScreen() {
       eventSourceRef.current = eventSource;
       let finished = false;
       let weightCheckRequested = false;
+      let lastSafetyState: SafetySensorData['safety_state'];
+
+      console.info('[SAFETY CHECK][SSE_CONNECTED] 센서 스트림 연결을 시작했습니다.', {
+        sessionId,
+        userId: user.id,
+        url: `${RASPI_API_BASE}/session/stream`,
+      });
 
       eventSource.addEventListener('message', (event) => {
         if (runId !== runIdRef.current || !event.data) return;
@@ -127,6 +180,14 @@ export default function SafetyCheckScreen() {
         try {
           const data: SafetySensorData = JSON.parse(event.data);
           const safetyState = data.safety_state;
+          if (safetyState !== lastSafetyState) {
+            console.info('[SAFETY CHECK][STATE_CHANGED] 안전 상태가 변경되었습니다.', {
+              from: lastSafetyState ?? null,
+              to: safetyState ?? null,
+              stm32Connected: data.stm32_connected,
+            });
+            lastSafetyState = safetyState;
+          }
           const alcoholFail = data.is_drunk === true || data.warning_reason === 'drunk';
           const passengerFail = data.is_two_person === true || data.warning_reason === 'two_person';
           const hardwareFail = safetyState === 'fault' || data.stm32_connected === false;
@@ -136,19 +197,31 @@ export default function SafetyCheckScreen() {
 
           if (safetyState === 'waiting_rider' && !weightCheckRequested) {
             weightCheckRequested = true;
+            console.info('[SAFETY CHECK][WEIGHT_CHECK_REQUESTED] STM32 무게 측정을 요청합니다.', {
+              userId: user.id,
+            });
             raspiApiCall('POST', '/session/weight-check', { user_id: user.id })
               .then(res => {
                 if (!res?.data?.accepted) {
                   throw new Error(res?.message || '탑승 인원 측정을 시작하지 못했습니다.');
                 }
+                console.info('[SAFETY CHECK][WEIGHT_CHECK_STARTED] STM32 무게 측정이 시작되었습니다.', {
+                  safetyState: res.data.safety_state,
+                });
               })
               .catch(e => {
                 if (finished || runId !== runIdRef.current) return;
                 finished = true;
-                console.log('[SAFETY CHECK] 탑승 인원 측정 시작 실패:', e);
                 eventSource.close();
                 eventSourceRef.current = null;
-                setPhase('fail');
+                setChecks(p => p.map(c => c.label.includes('탑승')
+                  ? { ...c, status: 'fail', value: '측정 시작 실패' }
+                  : c));
+                fail({
+                  code: 'WEIGHT_CHECK_START_FAILED',
+                  message: '무게 측정을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.',
+                  detail: errorDetail(e),
+                }, { safetyState, userId: user.id });
               });
           }
 
@@ -173,32 +246,72 @@ export default function SafetyCheckScreen() {
 
           if (alcoholFail || passengerFail || hardwareFail) {
             finished = true;
-            setPhase('fail');
             eventSource.close();
             eventSourceRef.current = null;
+            if (data.stm32_connected === false) {
+              fail({
+                code: 'STM32_DISCONNECTED',
+                message: 'STM32 연결이 끊어졌습니다. 장치 연결을 확인해주세요.',
+              }, { safetyState });
+            } else if (safetyState === 'fault') {
+              fail({
+                code: 'SAFETY_FAULT',
+                message: '안전 장치 오류가 발생했습니다. Raspberry Pi와 STM32를 확인해주세요.',
+              }, { safetyState });
+            } else if (alcoholFail) {
+              fail({
+                code: 'ALCOHOL_DETECTED',
+                message: '음주가 감지되어 운행이 제한됩니다.',
+              }, { gas: data.gas, warningReason: data.warning_reason });
+            } else {
+              fail({
+                code: 'TWO_PERSON_DETECTED',
+                message: '2인 이상 탑승이 감지되어 운행이 제한됩니다.',
+              }, { weight: data.weight, warningReason: data.warning_reason });
+            }
             return;
           }
 
           if (unlocked && !data.is_drunk && !data.is_two_person) {
             finished = true;
+            console.info('[SAFETY CHECK][PASSED] 모든 안전 점검을 통과했습니다.', {
+              gas: data.gas,
+              weight: data.weight,
+              isLocked: data.is_locked,
+            });
             setPhase('pass');
             eventSource.close();
             eventSourceRef.current = null;
           }
         } catch (e) {
-          console.log('[SAFETY CHECK] 센서 데이터 파싱 실패:', e);
+          if (finished || runId !== runIdRef.current) return;
+          finished = true;
+          eventSource.close();
+          eventSourceRef.current = null;
+          fail({
+            code: 'SENSOR_DATA_INVALID',
+            message: '센서 데이터 형식이 올바르지 않습니다.',
+            detail: errorDetail(e),
+          }, { rawData: event.data });
         }
       });
 
-      eventSource.addEventListener('error', () => {
+      eventSource.addEventListener('error', (event) => {
         if (finished || runId !== runIdRef.current) return;
+        finished = true;
         eventSource.close();
         eventSourceRef.current = null;
-        setPhase('fail');
+        fail({
+          code: 'SSE_CONNECTION_FAILED',
+          message: 'Raspberry Pi 센서 연결이 끊어졌습니다. 서버 상태를 확인해주세요.',
+        }, { url: `${RASPI_API_BASE}/session/stream`, eventType: event.type });
       });
     } catch (e) {
-      console.log('[SAFETY CHECK] 점검 시작 실패:', e);
-      if (runId === runIdRef.current) setPhase('fail');
+      fail({
+        code: 'CHECK_INITIALIZATION_FAILED',
+        message: '안전 점검 정보를 불러오거나 연결을 초기화하지 못했습니다.',
+        detail: errorDetail(e),
+      });
     }
   };
 
@@ -208,7 +321,17 @@ export default function SafetyCheckScreen() {
       const sessionId = await AsyncStorage.getItem('session_id');
 
       if (!kickboardId || !sessionId) {
-        throw new Error('운행 시작 정보가 없습니다.');
+        const info: FailureInfo = {
+          code: 'RIDE_INFO_MISSING',
+          message: '킥보드 또는 안전점검 세션 정보가 없습니다.',
+        };
+        console.error(`[RIDE START][${info.code}] ${info.message}`, {
+          hasKickboardId: Boolean(kickboardId),
+          hasSessionId: Boolean(sessionId),
+        });
+        setFailure(info);
+        setPhase('fail');
+        return;
       }
 
       const rideRes = await apiCall('POST', '/rides/start', {
@@ -216,13 +339,35 @@ export default function SafetyCheckScreen() {
         started_at: new Date().toISOString(),
       });
 
-      const rideId = rideRes.data.ride_id;
+      const rideId = rideRes?.data?.ride_id;
+      if (!rideId) {
+        const info: FailureInfo = {
+          code: 'RIDE_RESPONSE_INVALID',
+          message: '운행 시작 응답에 운행 ID가 없습니다.',
+        };
+        console.error(`[RIDE START][${info.code}] ${info.message}`, { response: rideRes });
+        setFailure(info);
+        setPhase('fail');
+        return;
+      }
 
       await AsyncStorage.setItem('ride_id', String(rideId));
 
+      console.info('[RIDE START][SUCCESS] 운행이 시작되었습니다.', {
+        rideId,
+        kickboardId,
+        sessionId,
+      });
+
       router.replace('/monitoring');
     } catch (e) {
-      console.log(e);
+      const info: FailureInfo = {
+        code: 'RIDE_START_API_FAILED',
+        message: '앱 서버에서 운행을 시작하지 못했습니다. 서버 연결과 킥보드 상태를 확인해주세요.',
+        detail: errorDetail(e),
+      };
+      console.error(`[RIDE START][${info.code}] ${info.message}`, { detail: info.detail });
+      setFailure(info);
       setPhase('fail');
     }
   };
@@ -230,10 +375,8 @@ export default function SafetyCheckScreen() {
   const allPass = phase === 'pass';
   const anyFail = phase === 'fail';
 
-  const helmetCheck = checks.find(c => c.label.includes('헬멧'));
-  const alcoholCheck = checks.find(c => c.label.includes('음주'));
-  const helmetFail = helmetCheck?.status === 'fail';
-  const alcoholFail = alcoholCheck?.status === 'fail';
+  const helmetFail = failure?.code === 'IDENTITY_FAILED'
+    && checks.find(c => c.label.includes('헬멧'))?.status === 'fail';
 
   return (
     <View style={{ flex: 1, backgroundColor: T.bg }}>
@@ -264,12 +407,9 @@ export default function SafetyCheckScreen() {
           <View style={{ gap: 8 }}>
             <View style={[s.msgBox, { backgroundColor: T.errBg, borderColor: 'rgba(198,40,40,0.2)' }]}>
               <Text style={[s.msgText, { color: T.err }]}>
-                ⚠  {helmetFail
-                  ? '헬멧 미착용이 감지되어 운행이 제한됩니다.'
-                  : alcoholFail
-                  ? '음주가 감지되어 운행이 제한됩니다.'
-                  : '운행 시작에 실패했습니다. 다시 시도해주세요.'}
+                ⚠  {failure?.message ?? '알 수 없는 안전 점검 오류가 발생했습니다.'}
               </Text>
+              {failure?.detail && <Text style={[s.msgText, { color: T.textSub, marginTop: 6 }]}>상세: {failure.detail}</Text>}
             </View>
             {helmetFail && (
               <View style={[s.msgBox, { backgroundColor: T.warnBg, borderColor: 'rgba(230,81,0,0.25)', flexDirection: 'row', gap: 8 }]}>
