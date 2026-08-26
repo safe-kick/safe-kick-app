@@ -10,6 +10,7 @@ import {
 import { WFBadge } from '../components/ui';
 import { T } from '../constants/colors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import EventSource from 'react-native-sse';
 import { apiCall, raspiApiCall } from '../utils/api';
 import { RASPI_API_BASE } from '../constants/api';
 
@@ -294,16 +295,19 @@ export default function MonitoringScreen() {
   useEffect(() => {
     const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
 
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    eventSource.addEventListener('message', (event) => {
+      if (!event.data) return;
 
-      setFaceScore(data.face_score);
-      setWeight(data.weight);
-      setGas(data.gas);
-      setIsLocked(data.is_locked);
-      setWarningReason(data.warning_reason);
+      try {
+        const data = JSON.parse(event.data);
 
-      if (data.warning_reason) {
+        setFaceScore(data.face_score);
+        setWeight(data.weight);
+        setGas(data.gas);
+        setIsLocked(data.is_locked);
+        setWarningReason(data.warning_reason);
+
+        if (data.warning_reason) {
           setWarningReason(data.warning_reason);
           setIsLocked(data.is_locked);
 
@@ -311,11 +315,18 @@ export default function MonitoringScreen() {
             setPhase('remeasure');
           }
         }
-    };
+      } catch (error) {
+        console.error('[MONITORING][SENSOR_DATA_INVALID] 센서 데이터를 처리하지 못했습니다.', {
+          detail: error instanceof Error ? error.message : String(error),
+          rawData: event.data,
+        });
+      }
+    });
 
-    eventSource.onerror = () => {
+    eventSource.addEventListener('error', () => {
+      console.error('[MONITORING][SSE_CONNECTION_FAILED] 센서 스트림 연결이 끊어졌습니다.');
       eventSource.close();
-    };
+    });
 
     return () => {
       eventSource.close();
