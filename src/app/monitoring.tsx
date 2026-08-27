@@ -27,6 +27,7 @@ interface SensorRow {
 // ─── 상수 ────────────────────────────────────────────────
 const REMEASURE_SEC = 8;
 const MAX_SPEED = 20;
+const SSE_RECONNECT_MS = 2_000;
 
 // 경고 사유별 타이틀
 const WARNING_TITLES: Record<WarningReason, string> = {
@@ -282,6 +283,7 @@ export default function MonitoringScreen() {
   const [warningCount, setWarningCount] = useState(0);
   const [warningReason, setWarningReason] = useState<WarningReason | null>(null);
   const phaseRef = useRef<Phase>('normal');
+  const warningActiveRef = useRef(false);
 
 
   // QR 스캔 시 저장해둔 실제 킥보드 ID 로드
@@ -293,43 +295,72 @@ export default function MonitoringScreen() {
 
   // ─── SSE 이벤트 수신 ─────────────────────────────────────
   useEffect(() => {
-    const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
+    let disposed = false;
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    eventSource.addEventListener('message', (event) => {
-      if (!event.data) return;
+    const connect = () => {
+      if (disposed) return;
 
-      try {
-        const data = JSON.parse(event.data);
+      eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
 
-        setFaceScore(data.face_score);
-        setWeight(data.weight);
-        setGas(data.gas);
-        setIsLocked(data.is_locked);
-        setWarningReason(data.warning_reason);
+      eventSource.addEventListener('message', (event) => {
+        if (!event.data) return;
 
-        if (data.warning_reason) {
-          setWarningReason(data.warning_reason);
+        try {
+          const data = JSON.parse(event.data);
+          const nextWarning = data.warning_reason as WarningReason | null;
+
+          setFaceScore(data.face_score);
+          setWeight(data.weight);
+          setGas(data.gas);
           setIsLocked(data.is_locked);
+          setWarningReason(nextWarning);
 
-          if (phaseRef.current === 'normal') {
-            setPhase('remeasure');
+          if (nextWarning) {
+            if (!warningActiveRef.current) {
+              warningActiveRef.current = true;
+              setWarningCount(prev => prev + 1);
+            }
+
+            if (phaseRef.current === 'normal') {
+              setPhase('remeasure');
+            }
+          } else if (warningActiveRef.current) {
+            warningActiveRef.current = false;
+            if (phaseRef.current === 'remeasure' || phaseRef.current === 'slowdown') {
+              setSpeed(MAX_SPEED);
+              setPhase('normal');
+            }
           }
+        } catch (error) {
+          console.error('[MONITORING][SENSOR_DATA_INVALID] 센서 데이터를 처리하지 못했습니다.', {
+            detail: error instanceof Error ? error.message : String(error),
+            rawData: event.data,
+          });
         }
-      } catch (error) {
-        console.error('[MONITORING][SENSOR_DATA_INVALID] 센서 데이터를 처리하지 못했습니다.', {
-          detail: error instanceof Error ? error.message : String(error),
-          rawData: event.data,
-        });
-      }
-    });
+      });
 
-    eventSource.addEventListener('error', () => {
-      console.error('[MONITORING][SSE_CONNECTION_FAILED] 센서 스트림 연결이 끊어졌습니다.');
-      eventSource.close();
-    });
+      eventSource.addEventListener('error', () => {
+        if (disposed) return;
+        console.error('[MONITORING][SSE_CONNECTION_FAILED] 센서 스트림 연결이 끊어졌습니다. 재연결합니다.');
+        eventSource?.close();
+        eventSource = null;
+        if (!reconnectTimer) {
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connect();
+          }, SSE_RECONNECT_MS);
+        }
+      });
+    };
+
+    connect();
 
     return () => {
-      eventSource.close();
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSource?.close();
     };
   }, []);
 
@@ -417,22 +448,39 @@ export default function MonitoringScreen() {
       const sessionId = await AsyncStorage.getItem('session_id');
       const rideId = await AsyncStorage.getItem('ride_id');
 
-      // 종료 전에 먼저 요약 데이터를 받아둠 (session/end 이후엔 세션이 사라질 수 있음)
-      try {
-        const summaryRes = await raspiApiCall('GET', '/session/summary');
-        if (summaryRes?.data) {
-          await AsyncStorage.setItem('session_summary', JSON.stringify(summaryRes.data));
+      let sessionSummary: any = null;
+
+      if (sessionId) {
+        try {
+          const summaryRes = await raspiApiCall(
+            'GET',
+            `/session/summary?session_id=${encodeURIComponent(sessionId)}`,
+          );
+          sessionSummary = summaryRes?.data ?? null;
+        } catch (e) {
+          console.log('[RETURN] session/summary 조회 실패:', e);
         }
-      } catch (e) {
-        console.log('[RETURN] session/summary 조회 실패:', e);
       }
 
-      await raspiApiCall('POST', '/session/end');
+      const endRes = await raspiApiCall('POST', '/session/end');
+      sessionSummary = endRes?.data ?? sessionSummary;
+
+      if (sessionSummary) {
+        sessionSummary = {
+          ...sessionSummary,
+          duration_sec: sessionSummary.duration_sec ?? elapsed,
+        };
+        await AsyncStorage.setItem('session_summary', JSON.stringify(sessionSummary));
+      }
+
+      const finalWarningCount = typeof sessionSummary?.warning_count === 'number'
+        ? sessionSummary.warning_count
+        : warningCount;
 
       if (rideId) {
         await apiCall('PATCH', `/rides/${rideId}/end`, {
           ended_at: new Date().toISOString(),
-          warning_count: warningCount,
+          warning_count: finalWarningCount,
         });
       }
 
@@ -478,7 +526,7 @@ export default function MonitoringScreen() {
   const sensors: SensorRow[] = [
     {
       label: '가스 센서 (알코올)',
-      status: gas > 0.5 ? 'warn' : 'ok',
+      status: warningReason === 'drunk' ? 'warn' : 'ok',
       value: `${gas} ppm`,
     },
     {
