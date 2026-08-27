@@ -281,6 +281,8 @@ export default function MonitoringScreen() {
   const [stm32Connected, setStm32Connected] = useState(false);
   const [warningCount, setWarningCount] = useState(0);
   const [warningReason, setWarningReason] = useState<WarningReason | null>(null);
+  const [returning, setReturning] = useState(false);
+  const [returnError, setReturnError] = useState('');
   const phaseRef = useRef<Phase>('normal');
   const warningActiveRef = useRef(false);
 
@@ -418,11 +420,17 @@ export default function MonitoringScreen() {
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
   const doReturn = async () => {
+    if (returning) return;
+    setReturning(true);
+    setReturnError('');
     try {
       const sessionId = await AsyncStorage.getItem('session_id');
       const rideId = await AsyncStorage.getItem('ride_id');
+      if (!rideId) throw new Error('종료할 운행 ID가 없습니다.');
 
       let sessionSummary: any = null;
+      let raspiEndError: unknown = null;
+      let nodeEndError: unknown = null;
 
       if (sessionId) {
         try {
@@ -436,8 +444,17 @@ export default function MonitoringScreen() {
         }
       }
 
-      const endRes = await raspiApiCall('POST', '/session/end');
-      sessionSummary = endRes?.data ?? sessionSummary;
+      try {
+        const endRes = await raspiApiCall('POST', '/session/end');
+        const alreadyEnded = endRes?.status === 'error' && /활성화된 세션이 없습니다/.test(endRes?.message ?? '');
+        if (endRes?.status !== 'success' && !alreadyEnded) {
+          throw new Error(endRes?.message || 'Raspberry Pi 세션을 종료하지 못했습니다.');
+        }
+        sessionSummary = endRes?.data ?? sessionSummary;
+      } catch (error) {
+        raspiEndError = error;
+        console.error('[RETURN][RASPI_END_FAILED]', error);
+      }
 
       if (sessionSummary) {
         sessionSummary = {
@@ -451,21 +468,33 @@ export default function MonitoringScreen() {
         ? sessionSummary.warning_count
         : warningCount;
 
-      if (rideId) {
+      try {
         await apiCall('PATCH', `/rides/${rideId}/end`, {
           ended_at: new Date().toISOString(),
           warning_count: finalWarningCount,
         });
+      } catch (error) {
+        nodeEndError = error;
+        console.error('[RETURN][NODE_END_FAILED]', error);
       }
 
-      if (sessionId) {
-        await AsyncStorage.setItem('last_session_id', sessionId);
+      if (raspiEndError || nodeEndError) {
+        const failedTargets = [raspiEndError ? 'Raspberry Pi 잠금/세션 종료' : '', nodeEndError ? 'Node 운행 종료' : '']
+          .filter(Boolean)
+          .join(', ');
+        throw new Error(`${failedTargets} 처리에 실패했습니다. 네트워크를 확인한 뒤 다시 반납해주세요.`);
       }
+
+      if (sessionId) await AsyncStorage.setItem('last_session_id', sessionId);
+      router.replace('/return-complete');
     } catch (e) {
-      console.log(e);
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('[RETURN][FAILED]', e);
+      setReturnError(message);
+      if (Platform.OS !== 'web') Alert.alert('반납 실패', message);
+    } finally {
+      setReturning(false);
     }
-
-    router.replace('/return-complete');
   };
 
   const handleReturn = () => {
@@ -623,8 +652,9 @@ export default function MonitoringScreen() {
 
       {/* ── 반납 버튼 ── */}
       <View style={s.returnWrap}>
-        <TouchableOpacity style={s.returnBtn} onPress={handleReturn}>
-          <Text style={s.returnBtnText}>라이딩 종료 (반납)</Text>
+        {returnError ? <Text style={s.returnError}>{returnError}</Text> : null}
+        <TouchableOpacity style={[s.returnBtn, returning && { opacity: 0.5 }]} onPress={handleReturn} disabled={returning}>
+          <Text style={s.returnBtnText}>{returning ? '반납 처리 중...' : '라이딩 종료 (반납)'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -675,6 +705,7 @@ const s = StyleSheet.create({
     padding: 16, paddingBottom: 32,
     backgroundColor: T.bg, borderTopWidth: 1, borderTopColor: T.border,
   },
+  returnError: { color: T.err, fontSize: 11, lineHeight: 16, marginBottom: 8, textAlign: 'center' },
   returnBtn: {
     height: 48, backgroundColor: T.err,
     borderRadius: 12, alignItems: 'center', justifyContent: 'center',

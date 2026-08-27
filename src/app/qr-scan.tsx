@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 import { T } from "../constants/colors";
-import { raspiApiCall } from "../utils/api";
+import { apiCall, raspiApiCall } from "../utils/api";
 
 // QR 형식: safekickapp://ride?v=1&kickboard_id=KB-XXXXXXXX
 
@@ -121,6 +121,31 @@ export default function QRScanScreen() {
     setScanning(true);
     setError("");
     try {
+      const kickboardRes = await apiCall("GET", `/kickboards/${encodeURIComponent(kickboardId)}`);
+      if (!kickboardRes?.data?.available) {
+        throw new Error("현재 다른 사용자가 이용 중인 스쿠터입니다.");
+      }
+
+      let res: any;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          res = await raspiApiCall("GET", "/status");
+          break;
+        } catch (requestError) {
+          lastError = requestError;
+          if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 700));
+        }
+      }
+      if (!res) throw lastError ?? new Error("Raspberry Pi 응답이 없습니다.");
+      if (res.status !== "success") throw new Error(res.message || "스쿠터 연결에 실패했습니다.");
+      if (res.data?.session_active) {
+        const cleanupRes = await raspiApiCall("POST", "/session/end");
+        const cleanupSucceeded = cleanupRes?.status === "success"
+          || /활성화된 세션이 없습니다/.test(cleanupRes?.message ?? "");
+        if (!cleanupSucceeded) throw new Error(cleanupRes?.message || "이전 세션을 정리하지 못했습니다.");
+      }
+
       await AsyncStorage.setItem("kickboard_id", kickboardId);
       await AsyncStorage.multiRemove([
         "session_id",
@@ -129,14 +154,17 @@ export default function QRScanScreen() {
         "face_score",
         "helmet_score",
       ]);
-      const res = await raspiApiCall("GET", "/status");
-      if (res?.status !== "success") throw new Error("연결 실패");
       router.push("/selfie");
     } catch (e) {
       console.log("[QR] 연결 실패:", e);
       setScanned(false);
       setScanning(false);
-      setError("스쿠터 연결에 실패했습니다. 다시 시도해주세요.");
+      const detail = e instanceof Error ? e.message : String(e);
+      setError(
+        /다른 사용자가 이용 중/.test(detail)
+          ? detail
+          : "Raspberry Pi 연결 응답이 없습니다. 네트워크를 확인하고 다시 시도해주세요.",
+      );
     }
   };
 
