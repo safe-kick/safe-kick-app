@@ -12,7 +12,7 @@ import { T } from '../constants/colors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import EventSource from 'react-native-sse';
 import { apiCall, raspiApiCall } from '../utils/api';
-import { RASPI_API_BASE } from '../constants/api';
+import { RASPI_API_BASE, RASPI_IP } from '../constants/api';
 
 // ─── 타입 ────────────────────────────────────────────────
 type Phase = 'normal' | 'remeasure' | 'slowdown' | 'stopped';
@@ -276,10 +276,9 @@ export default function MonitoringScreen() {
   const [speed, setSpeed] = useState(MAX_SPEED);
   const cdProgress = useRef(new Animated.Value(1)).current;
   const [kickboardId, setKickboardId] = useState('');
-  const [faceScore, setFaceScore] = useState(0);
-  const [weight, setWeight] = useState(0);
   const [gas, setGas] = useState(0);
-  const [isLocked, setIsLocked] = useState(false);
+  const [helmetVerified, setHelmetVerified] = useState(true);
+  const [stm32Connected, setStm32Connected] = useState(false);
   const [warningCount, setWarningCount] = useState(0);
   const [warningReason, setWarningReason] = useState<WarningReason | null>(null);
   const phaseRef = useRef<Phase>('normal');
@@ -311,10 +310,9 @@ export default function MonitoringScreen() {
           const data = JSON.parse(event.data);
           const nextWarning = data.warning_reason as WarningReason | null;
 
-          setFaceScore(data.face_score);
-          setWeight(data.weight);
           setGas(data.gas);
-          setIsLocked(data.is_locked);
+          setHelmetVerified(data.helmet_verified !== false);
+          setStm32Connected(data.stm32_connected === true);
           setWarningReason(nextWarning);
 
           if (nextWarning) {
@@ -374,30 +372,6 @@ export default function MonitoringScreen() {
     const t = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(t);
   }, []);
-
-  // mock 경고 함수
-  const triggerMockWarning = async (reason: WarningReason) => {
-  try {
-    const sessionId = await AsyncStorage.getItem('session_id');
-
-    if (!sessionId) {
-      console.log('[MOCK WARNING] session_id 없음');
-      return;
-    }
-
-    setWarningReason(reason);
-    setWarningCount(prev => prev + 1);
-    setIsLocked(true);
-    setPhase('remeasure');
-
-    await raspiApiCall('POST', '/lock', {
-      session_id: Number(sessionId),
-      reason,
-    });
-  } catch (e) {
-    console.log('[MOCK WARNING] lock 실패:', e);
-  }
-};
 
   // 재측정 카운트다운
   useEffect(() => {
@@ -530,24 +504,29 @@ export default function MonitoringScreen() {
       value: `${gas} ppm`,
     },
     {
+      label: '헬멧 착용 감지',
+      status: helmetVerified ? 'ok' : 'warn',
+      value: helmetVerified ? '착용' : '미착용',
+    },
+    {
       label: '탑승 인원 감지',
       status: warningReason === 'two_person' ? 'warn' : 'ok',
       value: warningReason === 'two_person' ? '2명 감지' : '1명',
     },
     {
-      label: '얼굴 인식',
-      status: faceScore < 0.5 ? 'warn' : 'ok',
-      value: `${Math.round(faceScore * 100)}%`,
+      label: 'GPS 위치',
+      status: 'ok',
+      value: '신호 양호',
     },
     {
-      label: '무게 센서',
-      status: weight > 100 ? 'warn' : 'ok',
-      value: `${weight} kg`,
+      label: 'STM32 컨트롤러',
+      status: stm32Connected ? 'info' : 'warn',
+      value: stm32Connected ? '연결됨' : '연결 확인 중',
     },
     {
-      label: '잠금 상태',
-      status: isLocked ? 'warn' : 'ok',
-      value: isLocked ? '잠금' : '해제',
+      label: 'Raspberry Pi',
+      status: 'info',
+      value: RASPI_IP || '연결됨',
     },
   ];
 
@@ -639,36 +618,6 @@ export default function MonitoringScreen() {
           ))}
         </View>
 
-        {/* mock 경고 트리거 버튼 — 경고 사유별로 테스트 가능 */}
-        {phase === 'normal' && (
-          <View style={{ gap: 8 }}>
-            <TouchableOpacity
-              style={s.testBtn}
-              onPress={() => triggerMockWarning('two_person')}
-            >
-              <Text style={s.testBtnText}>⚠  이중 탑승 경고 테스트 (mock)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={s.testBtn}
-              onPress={() => triggerMockWarning('helmet_fail')}
-            >
-              <Text style={s.testBtnText}>🪖  헬멧 미착용 경고 테스트 (mock)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={s.testBtn}
-              onPress={() => triggerMockWarning('drunk')}
-            >
-              <Text style={s.testBtnText}>🍺  음주 감지 경고 테스트 (mock)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={s.testBtn}
-              onPress={() => triggerMockWarning('face_fail')}
-            >
-              <Text style={s.testBtnText}>🚫  얼굴 인식 실패 경고 테스트 (mock)</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
         <View style={{ height: 90 }} />
       </ScrollView>
 
@@ -720,12 +669,6 @@ const s = StyleSheet.create({
   },
   sensorLabel: { flex: 1, fontSize: 13, color: T.text },
   sensorVal: { fontSize: 12, color: T.textSub },
-
-  testBtn: {
-    height: 44, backgroundColor: T.warnBg,
-    borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-  },
-  testBtnText: { fontSize: 13, fontWeight: '600', color: T.warn },
 
   returnWrap: {
     position: 'absolute', bottom: 0, left: 0, right: 0,

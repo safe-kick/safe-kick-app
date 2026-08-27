@@ -1,39 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { router } from 'expo-router';
-import { T } from '../constants/colors';
-import { TopBar, WFCard, WFBadge } from '../components/ui';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import EventSource from 'react-native-sse';
-import { apiCall, raspiApiCall } from '../utils/api';
+import { TopBar, WFBadge, WFCard } from '../components/ui';
 import { RASPI_API_BASE } from '../constants/api';
+import { T } from '../constants/colors';
+import { apiCall, raspiApiCall } from '../utils/api';
 
-type S = 'done' | 'checking' | 'ok' | 'fail';
-interface CheckItem { label: string; status: S; value?: string }
+type CheckStatus = 'done' | 'checking' | 'ok' | 'fail';
+type ModalStage = 'alcoholGuide' | 'alcoholMeasuring' | 'alcoholSuccess' | 'alcoholFail' | 'riderGuide' | 'riderMeasuring' | 'riderFail' | null;
 
-type FailureCode =
-  | 'IDENTITY_FAILED'
-  | 'SESSION_MISSING'
-  | 'CHECK_INITIALIZATION_FAILED'
-  | 'SSE_CONNECTION_FAILED'
-  | 'SENSOR_DATA_INVALID'
-  | 'STM32_DISCONNECTED'
-  | 'SAFETY_FAULT'
-  | 'ALCOHOL_DETECTED'
-  | 'TWO_PERSON_DETECTED'
-  | 'WEIGHT_CHECK_START_FAILED'
-  | 'RIDE_INFO_MISSING'
-  | 'RIDE_START_API_FAILED'
-  | 'RIDE_RESPONSE_INVALID';
-
-interface FailureInfo {
-  code: FailureCode;
-  message: string;
-  detail?: string;
+interface CheckItem {
+  id: 'face' | 'helmet' | 'alcohol' | 'rider' | 'lock';
+  label: string;
+  status: CheckStatus;
+  value?: string;
 }
-
-const errorDetail = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
 
 interface SafetySensorData {
   gas?: number;
@@ -41,462 +24,296 @@ interface SafetySensorData {
   is_drunk?: boolean;
   is_two_person?: boolean;
   is_locked?: boolean;
-  status?: string;
   warning_reason?: string | null;
   safety_state?: 'starting' | 'locked' | 'checking_alcohol' | 'waiting_rider' | 'checking_rider' | 'unlocking' | 'monitoring' | 'warning' | 'fault';
   stm32_connected?: boolean;
 }
 
+const INITIAL_CHECKS: CheckItem[] = [
+  { id: 'face', label: '얼굴 인증', status: 'done', value: '완료' },
+  { id: 'helmet', label: '헬멧 착용', status: 'done', value: '착용' },
+  { id: 'alcohol', label: '음주 측정 (가스 센서)', status: 'checking' },
+  { id: 'rider', label: '탑승 인원 감지', status: 'checking' },
+  { id: 'lock', label: '잠금 상태', status: 'checking', value: '잠김' },
+];
+
+const errorDetail = (error: unknown) => error instanceof Error ? error.message : String(error);
+
 function CheckRow({ label, status, value }: CheckItem) {
-  const isDone = status === 'done';
-  const isOk = status === 'ok' || isDone;
-  const isFail = status === 'fail';
-  const isChecking = status === 'checking';
-
-  const iconBg = isFail ? T.errBg : isOk ? T.okBg : T.fill;
-  const badgeStatus = isDone ? 'ok' : isChecking ? 'connecting' : isOk ? 'ok' : 'err';
-  const badgeLabel = isDone ? '완료' : isChecking ? '확인 중' : isOk ? '정상' : '실패';
-
+  const complete = status === 'done' || status === 'ok';
+  const failed = status === 'fail';
+  const badgeLabel = status === 'done' ? '완료' : status === 'ok' ? '정상' : failed ? '실패' : '대기';
   return (
-    <View style={cr.row}>
-      <View style={[cr.iconBox, { backgroundColor: iconBg }]}>
-        {isOk
-          ? <Text style={[cr.icon, { color: T.ok }]}>✓</Text>
-          : isFail
-          ? <Text style={[cr.icon, { color: T.err }]}>✕</Text>
-          : <View style={cr.spinner} />}
+    <View style={styles.checkRow}>
+      <View style={[styles.checkIcon, complete && styles.checkIconOk, failed && styles.checkIconFail]}>
+        <Text style={[styles.checkMark, failed && { color: T.err }]}>{failed ? '!' : complete ? '✓' : '·'}</Text>
       </View>
-      <Text style={cr.label}>{label}</Text>
-      {value && <Text style={[cr.value, isFail && { color: T.err }]}>{value}</Text>}
-      <WFBadge label={badgeLabel} status={badgeStatus} />
+      <Text style={styles.checkLabel}>{label}</Text>
+      {value ? <Text style={styles.checkValue}>{value}</Text> : null}
+      <WFBadge label={badgeLabel} status={complete ? 'ok' : failed ? 'err' : 'connecting'} />
     </View>
   );
 }
 
-const cr = StyleSheet.create({
-  row: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.border,
-  },
-  iconBox: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  icon: { fontSize: 14, fontWeight: '700' },
-  spinner: {
-    width: 14, height: 14, borderRadius: 7,
-    borderWidth: 2, borderColor: T.fillMed, borderTopColor: T.info,
-  },
-  label: { flex: 1, fontSize: 14, color: T.text },
-  value: { fontSize: 12, color: T.textSub },
-});
+function Dots({ active, color = T.info }: { active: number; color?: string }) {
+  return <View style={styles.dots}>{[0, 1, 2].map(index => <View key={index} style={[styles.dot, index === active && { backgroundColor: color }]} />)}</View>;
+}
+
+function Progress({ value }: { value: number }) {
+  return <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.max(8, Math.min(100, value))}%` }]} /></View>;
+}
 
 export default function SafetyCheckScreen() {
-  const [checks, setChecks] = useState<CheckItem[]>([
-    { label: '얼굴 인증', status: 'done' },
-    { label: '헬멧 착용', status: 'checking' },
-    { label: '음주 측정 (가스 센서)', status: 'checking' },
-    { label: '탑승 인원 감지', status: 'checking' },
-    { label: '잠금 상태', status: 'checking' },
-  ]);
-  const [phase, setPhase] = useState<'checking' | 'pass' | 'fail'>('checking');
-  const [failure, setFailure] = useState<FailureInfo | null>(null);
+  const [checks, setChecks] = useState<CheckItem[]>(INITIAL_CHECKS);
+  const [modalStage, setModalStage] = useState<ModalStage>('alcoholGuide');
+  const [sensor, setSensor] = useState<SafetySensorData>({});
+  const [kickboardId, setKickboardId] = useState('KICK-A23F');
+  const [userId, setUserId] = useState<number | null>(null);
+  const [startingCommand, setStartingCommand] = useState(false);
+  const [fatalError, setFatalError] = useState('');
+  const [allPassed, setAllPassed] = useState(false);
+  const [countdown, setCountdown] = useState(2);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const runIdRef = useRef(0);
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const riderCheckStartedRef = useRef(false);
+  const alcoholSuccessHandledRef = useRef(false);
+  const rideStartingRef = useRef(false);
+
+  const updateCheck = useCallback((id: CheckItem['id'], patch: Partial<CheckItem>) => {
+    setChecks(current => current.map(item => item.id === id ? { ...item, ...patch } : item));
+  }, []);
+
+  const startAlcoholCheck = useCallback(async () => {
+    if (!userId || startingCommand) return;
+    setStartingCommand(true);
+    setFatalError('');
+    setModalStage('alcoholMeasuring');
+    updateCheck('alcohol', { status: 'checking', value: '측정 중' });
+    try {
+      const response = await raspiApiCall('POST', '/session/alcohol-check', { user_id: userId });
+      if (!response?.data?.accepted) throw new Error(response?.message || '음주 측정을 시작하지 못했습니다.');
+    } catch (error) {
+      setFatalError(errorDetail(error));
+      setModalStage('alcoholGuide');
+    } finally {
+      setStartingCommand(false);
+    }
+  }, [startingCommand, updateCheck, userId]);
+
+  const startWeightCheck = useCallback(async () => {
+    if (!userId || riderCheckStartedRef.current) return;
+    riderCheckStartedRef.current = true;
+    setModalStage('riderMeasuring');
+    updateCheck('rider', { status: 'checking', value: '감지 중' });
+    try {
+      const response = await raspiApiCall('POST', '/session/weight-check', { user_id: userId });
+      if (!response?.data?.accepted) throw new Error(response?.message || '탑승 인원 감지를 시작하지 못했습니다.');
+    } catch (error) {
+      riderCheckStartedRef.current = false;
+      setFatalError(errorDetail(error));
+      setModalStage('riderGuide');
+    }
+  }, [updateCheck, userId]);
 
   useEffect(() => {
-    runChecks();
+    if (modalStage !== 'riderGuide' || !userId) return;
+    transitionTimerRef.current = setTimeout(() => void startWeightCheck(), 1400);
+    return () => { if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current); };
+  }, [modalStage, startWeightCheck, userId]);
 
+  useEffect(() => {
+    let disposed = false;
+    const prepare = async () => {
+      try {
+        const [sessionId, userJson, face, helmet, storedKickboardId] = await Promise.all([
+          AsyncStorage.getItem('session_id'), AsyncStorage.getItem('user'), AsyncStorage.getItem('face_verified'),
+          AsyncStorage.getItem('helmet_verified'), AsyncStorage.getItem('kickboard_id'),
+        ]);
+        const user = userJson ? JSON.parse(userJson) : null;
+        if (!sessionId || !user?.id || face !== 'true' || helmet !== 'true') throw new Error('얼굴·헬멧 인증 또는 안전 점검 세션 정보가 없습니다.');
+        if (disposed) return;
+        setUserId(Number(user.id));
+        if (storedKickboardId) setKickboardId(storedKickboardId);
+
+        const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
+        eventSourceRef.current = eventSource;
+        eventSource.addEventListener('message', event => {
+          if (disposed || !event.data) return;
+          try {
+            const data: SafetySensorData = JSON.parse(event.data);
+            setSensor(data);
+            if (data.stm32_connected === false || data.safety_state === 'fault') {
+              setFatalError('안전 장치 연결을 확인해주세요.');
+              return;
+            }
+            const alcoholFailed = data.is_drunk === true || data.warning_reason === 'drunk';
+            const initialOverweight = data.safety_state === 'checking_rider' && (data.weight ?? 0) >= 110;
+            const riderFailed = data.is_two_person === true || data.warning_reason === 'two_person' || initialOverweight;
+
+            if (alcoholFailed) {
+              updateCheck('alcohol', { status: 'fail', value: `${data.gas ?? 0} ppm` });
+              setModalStage('alcoholFail');
+              alcoholSuccessHandledRef.current = false;
+              return;
+            }
+            if (data.safety_state === 'checking_alcohol') {
+              setModalStage('alcoholMeasuring');
+              updateCheck('alcohol', { status: 'checking', value: data.gas === undefined ? '측정 중' : `${data.gas} ppm` });
+              return;
+            }
+            if (data.safety_state === 'waiting_rider' && !alcoholSuccessHandledRef.current) {
+              alcoholSuccessHandledRef.current = true;
+              updateCheck('alcohol', { status: 'ok', value: `${data.gas ?? 0} ppm` });
+              setModalStage('alcoholSuccess');
+              transitionTimerRef.current = setTimeout(() => setModalStage('riderGuide'), 1500);
+              return;
+            }
+            if (riderFailed) {
+              updateCheck('rider', { status: 'fail', value: `${data.weight ?? 0} kg` });
+              setModalStage('riderFail');
+              return;
+            }
+            if (data.safety_state === 'checking_rider' || data.safety_state === 'unlocking') {
+              updateCheck('rider', { status: 'checking', value: data.weight === undefined ? '감지 중' : `${data.weight} kg` });
+              updateCheck('lock', { status: 'checking', value: data.safety_state === 'unlocking' ? '해제 중' : '잠김' });
+              setModalStage('riderMeasuring');
+              return;
+            }
+            if (data.safety_state === 'monitoring' && data.is_locked === false) {
+              updateCheck('rider', { status: 'ok', value: '1명' });
+              updateCheck('lock', { status: 'ok', value: '해제 완료' });
+              setModalStage(null);
+              setAllPassed(true);
+            }
+          } catch (error) {
+            setFatalError(`센서 데이터 처리 실패: ${errorDetail(error)}`);
+          }
+        });
+        eventSource.addEventListener('error', () => { if (!disposed) setFatalError('Raspberry Pi 센서 연결이 끊어졌습니다.'); });
+      } catch (error) {
+        if (!disposed) setFatalError(errorDetail(error));
+      }
+    };
+    void prepare();
     return () => {
-      runIdRef.current += 1;
+      disposed = true;
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
     };
+  }, [updateCheck]);
+
+  const startRide = useCallback(async () => {
+    if (rideStartingRef.current) return;
+    rideStartingRef.current = true;
+    try {
+      const [storedKickboardId, sessionId] = await Promise.all([AsyncStorage.getItem('kickboard_id'), AsyncStorage.getItem('session_id')]);
+      if (!storedKickboardId || !sessionId) throw new Error('킥보드 또는 안전 점검 세션 정보가 없습니다.');
+      const response = await apiCall('POST', '/rides/start', { kickboard_id: storedKickboardId, started_at: new Date().toISOString() });
+      const rideId = response?.data?.ride_id;
+      if (!rideId) throw new Error('운행 시작 응답에 운행 ID가 없습니다.');
+      await AsyncStorage.setItem('ride_id', String(rideId));
+      router.replace('/monitoring');
+    } catch (error) {
+      rideStartingRef.current = false;
+      setFatalError(errorDetail(error));
+      setAllPassed(false);
+    }
   }, []);
 
-  const runChecks = async () => {
-    const runId = ++runIdRef.current;
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
-    setPhase('checking');
-    setFailure(null);
+  useEffect(() => {
+    if (!allPassed) return;
+    setCountdown(2);
+    const timer = setInterval(() => setCountdown(value => {
+      if (value <= 1) { clearInterval(timer); void startRide(); return 0; }
+      return value - 1;
+    }), 1000);
+    return () => clearInterval(timer);
+  }, [allPassed, startRide]);
 
-    const fail = (info: FailureInfo, context?: Record<string, unknown>) => {
-      if (runId !== runIdRef.current) return;
-      const logContext = {
-        ...(info.detail ? { detail: info.detail } : {}),
-        ...context,
-      };
-      if (info.code === 'ALCOHOL_DETECTED' || info.code === 'TWO_PERSON_DETECTED') {
-        console.warn(`[SAFETY CHECK][${info.code}] ${info.message}`, logContext);
-      } else {
-        console.error(`[SAFETY CHECK][${info.code}] ${info.message}`, logContext);
-      }
-      setFailure(info);
-      setPhase('fail');
-    };
-
-    try {
-      const [sessionId, userJson, faceVerified, helmetVerified] = await Promise.all([
-        AsyncStorage.getItem('session_id'),
-        AsyncStorage.getItem('user'),
-        AsyncStorage.getItem('face_verified'),
-        AsyncStorage.getItem('helmet_verified'),
-      ]);
-      const user = userJson ? JSON.parse(userJson) : null;
-      if (!sessionId || !user?.id) {
-        fail({
-          code: 'SESSION_MISSING',
-          message: '활성 안전점검 세션 또는 로그인 정보가 없습니다.',
-        }, { hasSessionId: Boolean(sessionId), hasUserId: Boolean(user?.id) });
-        return;
-      }
-
-      const identityPassed = faceVerified === 'true' && helmetVerified === 'true';
-      setChecks(p => p.map(c => {
-        if (c.label === '얼굴 인증') {
-          return { ...c, status: faceVerified === 'true' ? 'done' : 'fail', value: faceVerified === 'true' ? '완료' : '미인증' };
-        }
-        if (c.label.includes('헬멧')) {
-          return { ...c, status: helmetVerified === 'true' ? 'ok' : 'fail', value: helmetVerified === 'true' ? '착용' : '미인증' };
-        }
-        return { ...c, status: 'checking', value: undefined };
-      }));
-      if (!identityPassed) {
-        fail({
-          code: 'IDENTITY_FAILED',
-          message: '얼굴 또는 헬멧 인증이 완료되지 않았습니다.',
-        }, { faceVerified, helmetVerified });
-        return;
-      }
-
-      const eventSource = new EventSource(`${RASPI_API_BASE}/session/stream`);
-      eventSourceRef.current = eventSource;
-      let finished = false;
-      let weightCheckRequested = false;
-      let lastSafetyState: SafetySensorData['safety_state'];
-
-      console.info('[SAFETY CHECK][SSE_CONNECTED] 센서 스트림 연결을 시작했습니다.', {
-        sessionId,
-        userId: user.id,
-        url: `${RASPI_API_BASE}/session/stream`,
-      });
-
-      eventSource.addEventListener('message', (event) => {
-        if (runId !== runIdRef.current || !event.data) return;
-
-        try {
-          const data: SafetySensorData = JSON.parse(event.data);
-          const safetyState = data.safety_state;
-          if (safetyState !== lastSafetyState) {
-            console.info('[SAFETY CHECK][STATE_CHANGED] 안전 상태가 변경되었습니다.', {
-              from: lastSafetyState ?? null,
-              to: safetyState ?? null,
-              stm32Connected: data.stm32_connected,
-            });
-            lastSafetyState = safetyState;
-          }
-          const alcoholFail = data.is_drunk === true || data.warning_reason === 'drunk';
-          const passengerFail = data.is_two_person === true || data.warning_reason === 'two_person';
-          const hardwareFail = safetyState === 'fault' || data.stm32_connected === false;
-          const alcoholPassed = ['waiting_rider', 'checking_rider', 'unlocking', 'monitoring'].includes(safetyState ?? '');
-          const passengerPassed = ['unlocking', 'monitoring'].includes(safetyState ?? '');
-          const unlocked = safetyState === 'monitoring' && data.is_locked === false;
-
-          if (safetyState === 'waiting_rider' && !weightCheckRequested) {
-            weightCheckRequested = true;
-            console.info('[SAFETY CHECK][WEIGHT_CHECK_REQUESTED] STM32 무게 측정을 요청합니다.', {
-              userId: user.id,
-            });
-            raspiApiCall('POST', '/session/weight-check', { user_id: user.id })
-              .then(res => {
-                if (!res?.data?.accepted) {
-                  throw new Error(res?.message || '탑승 인원 측정을 시작하지 못했습니다.');
-                }
-                console.info('[SAFETY CHECK][WEIGHT_CHECK_STARTED] STM32 무게 측정이 시작되었습니다.', {
-                  safetyState: res.data.safety_state,
-                });
-              })
-              .catch(e => {
-                if (finished || runId !== runIdRef.current) return;
-                finished = true;
-                eventSource.close();
-                eventSourceRef.current = null;
-                setChecks(p => p.map(c => c.label.includes('탑승')
-                  ? { ...c, status: 'fail', value: '측정 시작 실패' }
-                  : c));
-                fail({
-                  code: 'WEIGHT_CHECK_START_FAILED',
-                  message: '무게 측정을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.',
-                  detail: errorDetail(e),
-                }, { safetyState, userId: user.id });
-              });
-          }
-
-          setChecks(p => p.map(c => {
-            if (c.label.includes('음주')) {
-              if (alcoholFail) return { ...c, status: 'fail', value: `${data.gas ?? 0} ppm` };
-              if (alcoholPassed) return { ...c, status: 'ok', value: `${data.gas ?? 0} ppm` };
-              return { ...c, status: 'checking', value: data.gas !== undefined ? `${data.gas} ppm` : undefined };
-            }
-            if (c.label.includes('탑승')) {
-              if (passengerFail) return { ...c, status: 'fail', value: '2명 이상' };
-              if (passengerPassed) return { ...c, status: 'ok', value: '1명' };
-              return { ...c, status: 'checking', value: data.weight !== undefined ? `${data.weight} kg` : undefined };
-            }
-            if (c.label.includes('잠금')) {
-              if (hardwareFail) return { ...c, status: 'fail', value: '장치 오류' };
-              if (unlocked) return { ...c, status: 'ok', value: '해제' };
-              return { ...c, status: 'checking', value: data.is_locked ? '잠김' : '해제 중' };
-            }
-            return c;
-          }));
-
-          if (alcoholFail || passengerFail || hardwareFail) {
-            finished = true;
-            eventSource.close();
-            eventSourceRef.current = null;
-            if (data.stm32_connected === false) {
-              fail({
-                code: 'STM32_DISCONNECTED',
-                message: 'STM32 연결이 끊어졌습니다. 장치 연결을 확인해주세요.',
-              }, { safetyState });
-            } else if (safetyState === 'fault') {
-              fail({
-                code: 'SAFETY_FAULT',
-                message: '안전 장치 오류가 발생했습니다. Raspberry Pi와 STM32를 확인해주세요.',
-              }, { safetyState });
-            } else if (alcoholFail) {
-              fail({
-                code: 'ALCOHOL_DETECTED',
-                message: '음주가 감지되어 운행이 제한됩니다.',
-              }, { gas: data.gas, warningReason: data.warning_reason });
-            } else {
-              fail({
-                code: 'TWO_PERSON_DETECTED',
-                message: '2인 이상 탑승이 감지되어 운행이 제한됩니다.',
-              }, { weight: data.weight, warningReason: data.warning_reason });
-            }
-            return;
-          }
-
-          if (unlocked && !data.is_drunk && !data.is_two_person) {
-            finished = true;
-            console.info('[SAFETY CHECK][PASSED] 모든 안전 점검을 통과했습니다.', {
-              gas: data.gas,
-              weight: data.weight,
-              isLocked: data.is_locked,
-            });
-            setPhase('pass');
-            eventSource.close();
-            eventSourceRef.current = null;
-          }
-        } catch (e) {
-          if (finished || runId !== runIdRef.current) return;
-          finished = true;
-          eventSource.close();
-          eventSourceRef.current = null;
-          fail({
-            code: 'SENSOR_DATA_INVALID',
-            message: '센서 데이터 형식이 올바르지 않습니다.',
-            detail: errorDetail(e),
-          }, { rawData: event.data });
-        }
-      });
-
-      eventSource.addEventListener('error', (event) => {
-        if (finished || runId !== runIdRef.current) return;
-        finished = true;
-        eventSource.close();
-        eventSourceRef.current = null;
-        fail({
-          code: 'SSE_CONNECTION_FAILED',
-          message: 'Raspberry Pi 센서 연결이 끊어졌습니다. 서버 상태를 확인해주세요.',
-        }, { url: `${RASPI_API_BASE}/session/stream`, eventType: event.type });
-      });
-    } catch (e) {
-      fail({
-        code: 'CHECK_INITIALIZATION_FAILED',
-        message: '안전 점검 정보를 불러오거나 연결을 초기화하지 못했습니다.',
-        detail: errorDetail(e),
-      });
-    }
+  const retryAlcohol = () => { alcoholSuccessHandledRef.current = false; setFatalError(''); void startAlcoholCheck(); };
+  const retryRider = () => {
+    setFatalError('');
+    updateCheck('rider', { status: 'checking', value: sensor.weight === undefined ? '감지 중' : `${sensor.weight} kg` });
+    setModalStage('riderMeasuring');
   };
-
-  const startRide = async () => {
-    try {
-      const kickboardId = await AsyncStorage.getItem('kickboard_id');
-      const sessionId = await AsyncStorage.getItem('session_id');
-
-      if (!kickboardId || !sessionId) {
-        const info: FailureInfo = {
-          code: 'RIDE_INFO_MISSING',
-          message: '킥보드 또는 안전점검 세션 정보가 없습니다.',
-        };
-        console.error(`[RIDE START][${info.code}] ${info.message}`, {
-          hasKickboardId: Boolean(kickboardId),
-          hasSessionId: Boolean(sessionId),
-        });
-        setFailure(info);
-        setPhase('fail');
-        return;
-      }
-
-      const rideRes = await apiCall('POST', '/rides/start', {
-        kickboard_id: kickboardId,
-        started_at: new Date().toISOString(),
-      });
-
-      const rideId = rideRes?.data?.ride_id;
-      if (!rideId) {
-        const info: FailureInfo = {
-          code: 'RIDE_RESPONSE_INVALID',
-          message: '운행 시작 응답에 운행 ID가 없습니다.',
-        };
-        console.error(`[RIDE START][${info.code}] ${info.message}`, { response: rideRes });
-        setFailure(info);
-        setPhase('fail');
-        return;
-      }
-
-      await AsyncStorage.setItem('ride_id', String(rideId));
-
-      console.info('[RIDE START][SUCCESS] 운행이 시작되었습니다.', {
-        rideId,
-        kickboardId,
-        sessionId,
-      });
-
-      router.replace('/monitoring');
-    } catch (e) {
-      const info: FailureInfo = {
-        code: 'RIDE_START_API_FAILED',
-        message: '앱 서버에서 운행을 시작하지 못했습니다. 서버 연결과 킥보드 상태를 확인해주세요.',
-        detail: errorDetail(e),
-      };
-      console.error(`[RIDE START][${info.code}] ${info.message}`, { detail: info.detail });
-      setFailure(info);
-      setPhase('fail');
-    }
-  };
-
-  const allPass = phase === 'pass';
-  const anyFail = phase === 'fail';
-
-  const helmetFail = failure?.code === 'IDENTITY_FAILED'
-    && checks.find(c => c.label.includes('헬멧'))?.status === 'fail';
+  const gasProgress = sensor.gas === undefined ? 12 : Math.min(92, 20 + Math.abs(sensor.gas) % 72);
+  const riderProgress = sensor.weight === undefined ? 10 : Math.min(92, 22 + sensor.weight);
 
   return (
-    <View style={{ flex: 1, backgroundColor: T.bg }}>
+    <View style={styles.screen}>
       <TopBar title="안전 점검" back onBack={() => router.back()} />
-      <ScrollView contentContainerStyle={s.content}>
-
-        <View style={s.scooterRow}>
-          <View style={s.scooterIcon} />
-          <View style={{ flex: 1 }}>
-            <Text style={s.scooterLabel}>연결된 스쿠터</Text>
-            <Text style={s.scooterId}>KICK-A23F</Text>
-          </View>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.scooterRow}>
+          <Text style={styles.scooterIcon}>🛴</Text>
+          <View style={{ flex: 1 }}><Text style={styles.scooterLabel}>연결된 스쿠터</Text><Text style={styles.scooterId}>{kickboardId}</Text></View>
           <WFBadge label="연결됨" status="info" />
         </View>
-
-        <WFCard style={{ padding: 0, paddingHorizontal: 16, paddingTop: 4 }}>
-          {checks.map((c, i) => <CheckRow key={i} {...c} />)}
-        </WFCard>
-
-        {!allPass && !anyFail && (
-          <View style={[s.msgBox, { backgroundColor: T.infoBg, borderColor: 'rgba(21,101,192,0.2)' }]}>
-            <Text style={[s.msgText, { color: T.info }]}>
-              ℹ  센서 데이터를 수신 중입니다. Raspberry Pi와 STM32가 점검 중입니다.
-            </Text>
-          </View>
-        )}
-        {anyFail && (
-          <View style={{ gap: 8 }}>
-            <View style={[s.msgBox, { backgroundColor: T.errBg, borderColor: 'rgba(198,40,40,0.2)' }]}>
-              <Text style={[s.msgText, { color: T.err }]}>
-                ⚠  {failure?.message ?? '알 수 없는 안전 점검 오류가 발생했습니다.'}
-              </Text>
-              {failure?.detail && <Text style={[s.msgText, { color: T.textSub, marginTop: 6 }]}>상세: {failure.detail}</Text>}
-            </View>
-            {helmetFail && (
-              <View style={[s.msgBox, { backgroundColor: T.warnBg, borderColor: 'rgba(230,81,0,0.25)', flexDirection: 'row', gap: 8 }]}>
-                <Text style={{ fontSize: 14 }}>🪖</Text>
-                <Text style={[s.msgText, { color: T.warn, flex: 1 }]}>헬멧을 착용하고 카메라 앞에 서주세요.</Text>
-              </View>
-            )}
-          </View>
-        )}
-        {allPass && (
-          <View style={[s.msgBox, { backgroundColor: T.okBg, borderColor: 'rgba(46,125,50,0.2)' }]}>
-            <Text style={[s.msgText, { color: T.ok }]}>
-              ✓  모든 안전 점검을 통과했습니다
-            </Text>
-          </View>
-        )}
-
-        {allPass ? (
-          <View style={s.readyBox}>
-            <Text style={s.readyTitle}>운행 준비 완료</Text>
-            <Text style={s.readySub}>모든 안전 점검을 통과했습니다</Text>
-            <TouchableOpacity style={s.startBtn} onPress={startRide} activeOpacity={0.8}>
-              <Text style={s.startBtnText}>⚡  라이딩 시작</Text>
-            </TouchableOpacity>
-          </View>
-        ) : anyFail ? (
-          <View style={s.btnGroup}>
-            {/* onPress 누락되어 있던 버그 수정 — 다시 점검 실행되도록 */}
-            <TouchableOpacity style={s.retryBtn} onPress={runChecks}>
-              <Text style={s.retryBtnText}>↺  다시 시도</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.cancelBtn} onPress={() => router.replace('/main')}>
-              <Text style={s.cancelBtnText}>취소</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={s.disabledBtn}>
-            <Text style={s.disabledBtnText}>점검 중...</Text>
-          </View>
-        )}
-
+        <WFCard style={styles.checkCard}>{checks.map(item => <CheckRow key={item.id} {...item} />)}</WFCard>
+        {fatalError ? <View style={styles.errorBanner}><Text style={styles.errorText}>⚠ {fatalError}</Text></View> : null}
+        {allPassed ? <><View style={styles.passBanner}><Text style={styles.passText}>✓  모든 안전 점검을 통과했습니다</Text></View><View style={styles.readyBox}><Text style={styles.readyTitle}>운행 준비 완료</Text><Text style={styles.readySub}>모든 안전 점검을 통과했습니다</Text><Text style={styles.autoStart}>{countdown}초 후 라이딩이 자동으로 시작됩니다.</Text><Text style={styles.countdown}>{countdown}</Text></View></> : null}
       </ScrollView>
+
+      {modalStage ? <View style={styles.overlay}><View style={styles.modal}>
+        {modalStage === 'alcoholGuide' ? <><ModalTitle icon="🌬️" title="음주 측정 안내" tone="blue" /><View style={styles.sensorDiagram}><Text style={styles.diagramLabel}>센서</Text><View style={styles.diagramRow}><View style={styles.handle} /><Text style={styles.sensorCircle}>●</Text><View style={styles.handle} /></View><Text style={styles.diagramCaption}>핸들 중앙 = 음주 측정 센서</Text></View><Text style={styles.bodyText}>킥보드 손잡이 가운데에 있는 <Text style={styles.blueStrong}>음주 측정 센서</Text>에 숨을 불어주세요.</Text><Text style={styles.mutedText}>측정 준비가 완료되면 아래 시작 버튼을 눌러주세요.</Text>{fatalError ? <Text style={styles.inlineError}>{fatalError}</Text> : null}<View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label={startingCommand ? '시작 중...' : '음주 측정 시작'} onPress={() => void startAlcoholCheck()} disabled={startingCommand || !userId} /></View></> : null}
+        {modalStage === 'alcoholMeasuring' ? <><ModalTitle icon="🔄" title="음주 측정 중" tone="blue" /><Text style={styles.bodyText}>센서를 향해 일정하게 숨을 불어주세요.</Text><View style={styles.measureRow}><Text style={styles.mutedText}>측정 중...</Text><Text style={styles.measureValue}>{sensor.gas ?? '—'} ppm</Text></View><Progress value={gasProgress} /><Dots active={0} /></> : null}
+        {modalStage === 'alcoholSuccess' ? <><ModalTitle icon="✅" title="음주 측정 완료" tone="green" /><View style={styles.successBox}><Text style={styles.successTitle}>음주 측정을 통과했습니다.</Text><Text style={styles.successSub}>측정값: {sensor.gas ?? 0} ppm</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>탑승 인원 감지로 이동 중...</Text><Dots active={0} color={T.ok} /></> : null}
+        {modalStage === 'alcoholFail' ? <><ModalTitle icon="⚠️" title="음주 감지됨" tone="red" /><View style={styles.failBox}><Text style={styles.failTitle}>음주가 감지되어 운행이 제한됩니다.</Text><Text style={styles.failSub}>측정값: {sensor.gas ?? 0} ppm (기준치 초과)</Text></View><Text style={styles.mutedText}>음주 상태에서는 킥보드를 이용할 수 없습니다. 안전을 위해 탑승을 삼가주세요.</Text><View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label="다시 측정" onPress={retryAlcohol} /></View></> : null}
+        {modalStage === 'riderGuide' ? <><ModalTitle icon="🛴" title="탑승 인원 감지 안내" tone="blue" /><View style={styles.riderDiagram}><Text style={styles.riderPerson}>◯</Text><View style={styles.riderBody} /><View style={styles.board} /><View style={styles.wheels}><Text>●</Text><Text>●</Text></View><Text style={styles.diagramCaption}>1인만 탑승하세요</Text></View><Text style={styles.bodyText}>킥보드에 혼자 올라가 주세요. 탑승 인원은 자동으로 감지됩니다.</Text><View style={styles.warningBox}><Text style={styles.warningText}>⚠ 라이딩 중 추가 탑승자가 감지되면 안전을 위해 킥보드가 감속 후 정지됩니다.</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>자동 감지 시작 중...</Text></> : null}
+        {modalStage === 'riderMeasuring' ? <><ModalTitle icon="⚖️" title="탑승 인원 확인 중" tone="blue" /><Text style={styles.bodyText}>측정이 끝날 때까지 킥보드 위에서 움직이지 말아주세요.</Text><View style={styles.weightBox}><Text style={styles.weightLabel}>⚖️  자동 감지 중...</Text><Text style={styles.weightValue}>{sensor.weight ?? '—'} kg</Text></View><Progress value={riderProgress} /></> : null}
+        {modalStage === 'riderFail' ? <><ModalTitle icon="⚠️" title="추가 탑승자 감지됨" tone="red" /><View style={styles.failBox}><Text style={styles.failTitle}>2인 이상 탑승이 감지되었습니다.</Text><Text style={styles.failSub}>감지 중량: {sensor.weight ?? 0} kg</Text></View><Text style={styles.mutedText}>혼자만 탑승 후 다시 시도해 주세요.</Text><View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label="다시 감지" onPress={retryRider} /></View></> : null}
+      </View></View> : null}
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  content: { padding: 20, gap: 16, paddingBottom: 40 },
-  scooterRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 12, backgroundColor: T.bgAlt,
-    borderRadius: 12, borderWidth: 1, borderColor: T.border,
-  },
-  scooterIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: T.fill },
+function ModalTitle({ icon, title, tone }: { icon: string; title: string; tone: 'blue' | 'green' | 'red' }) {
+  const backgroundColor = tone === 'green' ? T.okBg : tone === 'red' ? T.errBg : T.infoBg;
+  return <View style={styles.modalTitleRow}><View style={[styles.modalIcon, { backgroundColor }]}><Text style={styles.modalIconText}>{icon}</Text></View><Text style={styles.modalTitle}>{title}</Text></View>;
+}
+
+function ModalButton({ label, onPress, secondary, disabled }: { label: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) {
+  return <TouchableOpacity disabled={disabled} onPress={onPress} style={[styles.modalButton, secondary && styles.modalButtonSecondary, disabled && { opacity: 0.45 }]}><Text style={[styles.modalButtonText, secondary && { color: T.text }]}>{label}</Text></TouchableOpacity>;
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: T.bg },
+  content: { padding: 20, gap: 16, paddingBottom: 48 },
+  scooterRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 13, borderWidth: 1, borderColor: T.border, backgroundColor: T.bgAlt },
+  scooterIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: T.fill, textAlign: 'center', textAlignVertical: 'center', paddingTop: 9 },
   scooterLabel: { fontSize: 12, color: T.textMuted },
-  scooterId: { fontSize: 15, fontWeight: '700', color: T.text },
-  msgBox: { padding: 14, borderRadius: 12, borderWidth: 1 },
-  msgText: { fontSize: 13, lineHeight: 20 },
-  readyBox: { alignItems: 'center', gap: 8 },
-  readyTitle: { fontSize: 18, fontWeight: '700', color: T.text },
-  readySub: { fontSize: 13, color: T.textMuted },
-  startBtn: {
-    width: '100%', height: 52, backgroundColor: T.text,
-    borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 4,
-  },
-  startBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
-  disabledBtn: {
-    width: '100%', height: 52, backgroundColor: T.fillMed,
-    borderRadius: 12, alignItems: 'center', justifyContent: 'center',
-  },
-  disabledBtnText: { color: T.textMuted, fontSize: 15, fontWeight: '600' },
-  btnGroup: { gap: 10 },
-  retryBtn: {
-    width: '100%', height: 48, backgroundColor: T.fill,
-    borderRadius: 12, borderWidth: 1.5, borderColor: T.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  retryBtnText: { color: T.text, fontSize: 14, fontWeight: '600' },
-  cancelBtn: {
-    width: '100%', height: 48, borderRadius: 12,
-    borderWidth: 1.5, borderColor: T.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  cancelBtnText: { color: T.text, fontSize: 14, fontWeight: '600' },
+  scooterId: { fontSize: 15, color: T.text, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  checkCard: { paddingHorizontal: 16, paddingVertical: 2 },
+  checkRow: { minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: T.border },
+  checkIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: T.fill, alignItems: 'center', justifyContent: 'center' },
+  checkIconOk: { backgroundColor: T.okBg }, checkIconFail: { backgroundColor: T.errBg },
+  checkMark: { color: T.ok, fontSize: 18, fontWeight: '700' },
+  checkLabel: { flex: 1, fontSize: 14, color: T.text },
+  checkValue: { fontSize: 12, color: T.textSub, fontVariant: ['tabular-nums'] },
+  overlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
+  modal: { width: '100%', maxWidth: 390, borderRadius: 20, backgroundColor: T.bg, padding: 20, gap: 16 },
+  modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  modalIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, modalIconText: { fontSize: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: T.text },
+  bodyText: { fontSize: 14, lineHeight: 22, color: T.text }, mutedText: { fontSize: 12, lineHeight: 19, color: T.textMuted },
+  blueStrong: { color: T.info, fontWeight: '700' },
+  sensorDiagram: { alignItems: 'center', gap: 7, paddingVertical: 2 }, diagramLabel: { color: T.info, fontSize: 10 },
+  diagramRow: { flexDirection: 'row', alignItems: 'center' }, handle: { width: 30, height: 16, backgroundColor: T.fillMed, borderRadius: 2 },
+  sensorCircle: { width: 22, height: 22, marginHorizontal: 23, borderRadius: 11, borderWidth: 3, borderColor: T.info, color: T.info, textAlign: 'center', lineHeight: 16 },
+  diagramCaption: { color: T.info, fontSize: 10, textAlign: 'center' },
+  buttonRow: { flexDirection: 'row', gap: 9, marginTop: 2 },
+  modalButton: { flex: 1, height: 44, borderRadius: 11, backgroundColor: T.text, alignItems: 'center', justifyContent: 'center' },
+  modalButtonSecondary: { backgroundColor: T.bg, borderWidth: 1, borderColor: T.border }, modalButtonText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  measureRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, measureValue: { fontSize: 12, color: T.info, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  progressTrack: { height: 5, borderRadius: 3, backgroundColor: T.fill, overflow: 'hidden' }, progressFill: { height: '100%', borderRadius: 3, backgroundColor: T.info },
+  dots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }, dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: T.fillMed },
+  successBox: { padding: 13, borderRadius: 10, backgroundColor: T.okBg, borderWidth: 1, borderColor: '#B7DDBA' }, successTitle: { fontSize: 13, color: T.ok, fontWeight: '800' }, successSub: { marginTop: 4, fontSize: 11, color: '#4D9A55' },
+  failBox: { padding: 13, borderRadius: 10, backgroundColor: T.errBg, borderWidth: 1, borderColor: '#FFB8BE' }, failTitle: { fontSize: 13, color: '#E72B38', fontWeight: '800' }, failSub: { marginTop: 4, fontSize: 11, color: '#E45A65' },
+  inlineError: { fontSize: 11, color: T.err },
+  riderDiagram: { height: 120, alignItems: 'center', justifyContent: 'center' }, riderPerson: { fontSize: 30, color: T.fillMed, lineHeight: 31 }, riderBody: { width: 7, height: 28, backgroundColor: T.fillMed }, board: { width: 66, height: 7, borderRadius: 2, backgroundColor: T.fillMed }, wheels: { width: 78, flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 },
+  warningBox: { padding: 12, borderRadius: 9, backgroundColor: T.warnBg, borderWidth: 1, borderColor: '#FFD09E' }, warningText: { color: T.warn, fontSize: 11, lineHeight: 17 },
+  weightBox: { padding: 14, borderRadius: 10, backgroundColor: T.infoBg }, weightLabel: { fontSize: 11, color: T.info }, weightValue: { marginTop: 4, fontSize: 22, color: T.info, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  errorBanner: { padding: 12, borderRadius: 10, backgroundColor: T.errBg, borderWidth: 1, borderColor: '#FFB8BE' }, errorText: { color: T.err, fontSize: 12 },
+  passBanner: { padding: 14, borderRadius: 11, backgroundColor: T.okBg, borderWidth: 1, borderColor: '#B7DDBA' }, passText: { color: T.ok, fontSize: 13, fontWeight: '700' },
+  readyBox: { alignItems: 'center', paddingTop: 12, gap: 8 }, readyTitle: { fontSize: 18, color: T.text, fontWeight: '800' }, readySub: { fontSize: 13, color: T.textMuted }, autoStart: { fontSize: 12, color: T.info, marginTop: 4 }, countdown: { fontSize: 56, color: T.text, fontWeight: '800', lineHeight: 64 },
 });
