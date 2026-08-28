@@ -225,6 +225,16 @@ export default function SafetyCheckScreen() {
           }
         });
         eventSource.addEventListener('error', () => { if (!disposed) setFatalError('Raspberry Pi 센서 연결이 끊어졌습니다.'); });
+
+        setStartingCommand(true);
+        try {
+          const response = await raspiApiCall('POST', '/session/mq3-baseline', { user_id: Number(user.id) });
+          if (!response?.data?.accepted) throw new Error(response?.message || '센서 기준값 측정을 시작하지 못했습니다.');
+        } catch (error) {
+          if (!disposed) setFatalError(errorDetail(error));
+        } finally {
+          if (!disposed) setStartingCommand(false);
+        }
       } catch (error) {
         if (!disposed) setFatalError(errorDetail(error));
       }

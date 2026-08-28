@@ -9,7 +9,6 @@ import { raspiApiCall } from "../utils/api";
 // About every 7 camera frames at 30 fps.
 const VERIFY_INTERVAL_MS = 233;
 type VerificationState = boolean | null;
-type BaselineState = "ready" | "measuring" | "failed";
 
 interface LiveVerifyResponse {
   status: string;
@@ -51,7 +50,6 @@ export default function SelfieScreen() {
   const [helmetVerified, setHelmetVerified] = useState<VerificationState>(null);
   const [faceScore, setFaceScore] = useState<number>();
   const [helmetScore, setHelmetScore] = useState<number>();
-  const [baselineStatus, setBaselineStatus] = useState<BaselineState>("measuring");
   const [message, setMessage] = useState("카메라를 준비하고 있습니다.");
   const cameraRef = useRef<CameraView>(null);
   const mountedRef = useRef(true);
@@ -105,18 +103,6 @@ export default function SelfieScreen() {
           userIdRef.current = Number(user.id);
           setSessionReady(true);
           setMessage("얼굴을 정면으로 보고 헬멧을 착용해주세요.");
-          setBaselineStatus("measuring");
-          void raspiApiCall("POST", "/session/mq3-baseline", {
-            user_id: Number(user.id),
-          }).then(response => {
-            if (!mountedRef.current) return;
-            setBaselineStatus(
-              response?.data?.baseline_status === "ready" ? "ready" : "measuring",
-            );
-          }).catch(error => {
-            console.log("[BASELINE] 기준값 측정 시작 실패:", error);
-            if (mountedRef.current) setBaselineStatus("failed");
-          });
         }
       } catch (error) {
         console.log("[LIVE VERIFY] 세션 준비 실패:", error);
@@ -218,7 +204,6 @@ export default function SelfieScreen() {
           {faceScore !== undefined && <Text style={s.score}>score {faceScore.toFixed(3)}</Text>}
           <View style={s.statusRow}><Text style={s.statusTitle}>헬멧 착용</Text><Text style={[s.statusValue, { color: statusColor(helmetVerified) }]}>{statusLabel("helmet", helmetVerified)}</Text></View>
           {helmetScore !== undefined && <Text style={s.score}>score {helmetScore.toFixed(3)}</Text>}
-          <View style={s.statusRow}><Text style={s.statusTitle}>센서 기준값</Text><Text style={[s.statusValue, { color: baselineStatus === "failed" ? "#FF5B5B" : baselineStatus === "ready" ? "#4ADE80" : "rgba(255,255,255,0.8)" }]}>{baselineStatus === "ready" ? "측정 완료" : baselineStatus === "failed" ? "측정 실패" : "측정 중..."}</Text></View>
         </View>
         <Text style={s.faceSub} accessibilityLiveRegion="polite">{message}</Text>
       </View>
