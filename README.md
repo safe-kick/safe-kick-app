@@ -318,6 +318,10 @@ selfie.tsx
   → 얼굴·헬멧 인증 성공 시 안전 점검 화면으로 자동 이동
   ↓
 safety-check.tsx
+  → 화면 진입 즉시 POST /session/mq3-baseline 자동 호출 (사용자 버튼 입력 없음)
+  → SSE의 baseline_status=measuring 동안 준비 버튼 비활성화
+  → STM32가 3.5초 기준값 측정과 부저 안내를 마치고 baseline_status=ready 전송
+  → "음주 측정 시작" 버튼 활성화
   → 음주 측정 안내 모달에서 시작 버튼을 누르면 POST /session/alcohol-check 호출
   → SSE(/session/stream)로 safety_state와 실제 STM32 센서 결과 수신
   → checking_alcohol 동안 음주 측정 결과 대기
