@@ -323,6 +323,7 @@ safety-check.tsx
   → SSE의 baseline_status=measuring 동안 준비 버튼 비활성화
   → STM32가 3.5초 기준값 측정과 부저 안내를 마치고 baseline_status=ready 전송
   → "음주 측정 시작" 버튼 활성화
+  → 작은 화면에서도 시작 버튼 문구를 한 줄로 유지하고 필요 시 글자 크기 자동 축소
   → 음주 측정 안내 모달에서 시작 버튼을 누르면 POST /session/alcohol-check 호출
   → SSE(/session/stream)로 safety_state와 실제 STM32 센서 결과 수신
   → checking_alcohol 동안 음주 측정 결과 대기
@@ -335,6 +336,8 @@ safety-check.tsx
 monitoring.tsx
   → SSE(/session/stream)로 얼굴·헬멧 인증 상태, 무게, MQ-3 원시값, 잠금 상태 수신
   → 현재 주행 중 자동 경고는 추가 탑승(two_person)을 기준으로 동작
+  → 추가 탑승 경고 즉시 5초 카운트다운과 20 km/h → 5 km/h 제한속도 표시
+  → 경고가 5초간 지속되면 잠금 처리 및 제한속도 0 km/h 표시
   → drunk는 주행 전 검사에서 차단하며, helmet_fail/face_fail 표시는 향후 주행 중 재인증 이벤트와 호환하기 위해 유지
   → 반납 시: GET /session/summary → POST /session/end → PATCH /rides/:rideId/end
   ↓

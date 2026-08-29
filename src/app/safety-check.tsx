@@ -361,7 +361,7 @@ function ModalTitle({ icon, title, tone }: { icon: string; title: string; tone: 
 }
 
 function ModalButton({ label, onPress, secondary, disabled }: { label: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) {
-  return <TouchableOpacity disabled={disabled} onPress={onPress} style={[styles.modalButton, secondary && styles.modalButtonSecondary, disabled && { opacity: 0.45 }]}><Text style={[styles.modalButtonText, secondary && { color: T.text }]}>{label}</Text></TouchableOpacity>;
+  return <TouchableOpacity disabled={disabled} onPress={onPress} style={[styles.modalButton, secondary && styles.modalButtonSecondary, disabled && { opacity: 0.45 }]}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85} style={[styles.modalButtonText, secondary && { color: T.text }]}>{label}</Text></TouchableOpacity>;
 }
 
 const styles = StyleSheet.create({
@@ -391,7 +391,7 @@ const styles = StyleSheet.create({
   diagramCaption: { color: T.info, fontSize: 10, textAlign: 'center' },
   buttonRow: { flexDirection: 'row', gap: 9, marginTop: 2 },
   modalButton: { flex: 1, height: 44, borderRadius: 11, backgroundColor: T.text, alignItems: 'center', justifyContent: 'center' },
-  modalButtonSecondary: { backgroundColor: T.bg, borderWidth: 1, borderColor: T.border }, modalButtonText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  modalButtonSecondary: { backgroundColor: T.bg, borderWidth: 1, borderColor: T.border }, modalButtonText: { color: '#FFF', fontSize: 14, fontWeight: '700', textAlign: 'center', flexShrink: 1 },
   measureRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, measureValue: { fontSize: 12, color: T.info, fontWeight: '700', fontVariant: ['tabular-nums'] },
   progressTrack: { height: 5, borderRadius: 3, backgroundColor: T.fill, overflow: 'hidden' }, progressFill: { height: '100%', borderRadius: 3, backgroundColor: T.info },
   dots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }, dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: T.fillMed },

@@ -25,8 +25,9 @@ interface SensorRow {
 }
 
 // ─── 상수 ────────────────────────────────────────────────
-const REMEASURE_SEC = 8;
+const LOCK_COUNTDOWN_SEC = 5;
 const MAX_SPEED = 20;
+const LIMITED_SPEED = 5;
 const SSE_RECONNECT_MS = 2_000;
 
 // 경고 사유별 타이틀
@@ -51,6 +52,9 @@ function getWarningSub(reason: WarningReason, phase: Phase) {
         return '완전 정지됨 — 1인 탑승 후 재시작하세요';
     }
   }
+  if (reason === 'two_person' && phase === 'slowdown') {
+    return '5초 동안 지속되면 잠금 처리됩니다';
+  }
   switch (reason) {
     case 'helmet_fail':
       return '헬멧을 착용한 후 계속하세요';
@@ -64,7 +68,7 @@ function getWarningSub(reason: WarningReason, phase: Phase) {
 }
 
 // ─── 단계 인디케이터 ──────────────────────────────────────
-const STEPS = ['이상 감지', '재측정 중', '감속 중', '정지'];
+const STEPS = ['이상 감지', '감속 중', '잠금 대기', '잠금'];
 
 function StepIndicator({ phase }: { phase: Phase }) {
   const activeIdx = { normal: -1, remeasure: 1, slowdown: 2, stopped: 3 }[phase];
@@ -191,22 +195,22 @@ function WarningBanner({ phase, reason, countdown, cdProgress }: {
             {getWarningSub(reason, phase)}
           </Text>
         </View>
-        {/* 카운트다운 or 속도 */}
-        {phase === 'remeasure' ? (
+        {/* 카운트다운 */}
+        {phase === 'remeasure' || phase === 'slowdown' ? (
           <View style={{ alignItems: 'center' }}>
             <Text style={[wb.bigNum, { color: textColor }]}>{countdown}</Text>
             <Text style={[wb.bigSub, { color: textColor }]}>sec</Text>
           </View>
-        ) : phase === 'slowdown' || phase === 'stopped' ? (
+        ) : phase === 'stopped' ? (
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={[wb.bigNum, { color: textColor, fontSize: 18 }]} id="speed-text" />
-            <Text style={[wb.bigSub, { color: textColor }]}>현재 속도</Text>
+            <Text style={[wb.bigNum, { color: textColor, fontSize: 18 }]}>0 <Text style={{ fontSize: 10 }}>km/h</Text></Text>
+            <Text style={[wb.bigSub, { color: textColor }]}>제한속도</Text>
           </View>
         ) : null}
       </View>
 
       {/* 프로그레스 바 */}
-      {phase === 'remeasure' && (
+      {(phase === 'remeasure' || phase === 'slowdown') && (
         <View style={wb.barBg}>
           <Animated.View style={[
             wb.barFill,
@@ -240,13 +244,26 @@ const wb = StyleSheet.create({
 });
 
 // ─── 감속 패널 ────────────────────────────────────────────
-function SlowdownPanel({ speed }: { speed: number }) {
+function SlowdownPanel({ phase, speed, countdown }: {
+  phase: Phase; speed: number; countdown: number;
+}) {
   const pct = Math.round(speed / MAX_SPEED * 100);
+  const stopped = phase === 'stopped';
   return (
     <View style={sp.wrap}>
       <View style={sp.row}>
-        <Text style={sp.label}>📉  완전 정지까지 감속 중</Text>
-        <Text style={sp.speed}>{speed} <Text style={{ fontSize: 12 }}>km/h</Text></Text>
+        <View style={{ flex: 1 }}>
+          <Text style={sp.label}>
+            {stopped ? '🔒  잠금 처리 완료' : '📉  20 km/h → 5 km/h 감속 중'}
+          </Text>
+          <Text style={sp.subLabel}>
+            {stopped ? '킥보드가 0 km/h로 감속되어 잠겼습니다.' : `${countdown}초 동안 지속되면 잠금 처리됩니다.`}
+          </Text>
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={sp.speed}>{speed} <Text style={{ fontSize: 12 }}>km/h</Text></Text>
+          <Text style={sp.speedLabel}>제한속도</Text>
+        </View>
       </View>
       <View style={sp.barBg}>
         <View style={[sp.barFill, { width: `${pct}%` as `${number}%` }]} />
@@ -263,7 +280,9 @@ const sp = StyleSheet.create({
   },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   label: { fontSize: 12, color: T.err },
+  subLabel: { fontSize: 10, color: T.err, opacity: 0.75, marginTop: 3 },
   speed: { fontSize: 20, fontWeight: '700', color: T.err, fontVariant: ['tabular-nums'] },
+  speedLabel: { fontSize: 10, color: T.err, opacity: 0.75 },
   barBg: { height: 6, backgroundColor: 'rgba(198,40,40,0.15)', borderRadius: 3 },
   barFill: { height: 6, backgroundColor: T.err, borderRadius: 3 },
 });
@@ -272,7 +291,7 @@ const sp = StyleSheet.create({
 export default function MonitoringScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [phase, setPhase] = useState<Phase>('normal');
-  const [countdown, setCountdown] = useState(REMEASURE_SEC);
+  const [countdown, setCountdown] = useState(LOCK_COUNTDOWN_SEC);
   const [speed, setSpeed] = useState(MAX_SPEED);
   const cdProgress = useRef(new Animated.Value(1)).current;
   const [kickboardId, setKickboardId] = useState('');
@@ -311,6 +330,7 @@ export default function MonitoringScreen() {
         try {
           const data = JSON.parse(event.data);
           const nextWarning = data.warning_reason as WarningReason | null;
+          const locked = data.is_locked === true || data.safety_state === 'locked';
 
           setGas(data.gas);
           setHelmetVerified(data.helmet_verified !== false);
@@ -323,9 +343,9 @@ export default function MonitoringScreen() {
               setWarningCount(prev => prev + 1);
             }
 
-            if (phaseRef.current === 'normal') {
-              setPhase('remeasure');
-            }
+            const lockDisplayed = locked || phaseRef.current === 'stopped';
+            setPhase(lockDisplayed ? 'stopped' : 'slowdown');
+            setSpeed(lockDisplayed ? 0 : LIMITED_SPEED);
           } else if (warningActiveRef.current) {
             warningActiveRef.current = false;
             if (phaseRef.current === 'remeasure' || phaseRef.current === 'slowdown') {
@@ -375,44 +395,32 @@ export default function MonitoringScreen() {
     return () => clearInterval(t);
   }, []);
 
-  // 재측정 카운트다운
+  // 추가 탑승 경고가 유지되는 동안 잠금까지 5초 카운트다운
   useEffect(() => {
-    if (phase !== 'remeasure') return;
-    setCountdown(REMEASURE_SEC);
+    if (phase !== 'slowdown') return;
+    setCountdown(LOCK_COUNTDOWN_SEC);
+    setSpeed(LIMITED_SPEED);
 
     // 프로그레스 바 애니메이션
     cdProgress.setValue(1);
     Animated.timing(cdProgress, {
       toValue: 0,
-      duration: REMEASURE_SEC * 1000,
+      duration: LOCK_COUNTDOWN_SEC * 1000,
       useNativeDriver: false,
     }).start();
 
-    let cd = REMEASURE_SEC;
+    let cd = LOCK_COUNTDOWN_SEC;
     const t = setInterval(() => {
       cd--;
       setCountdown(cd);
       if (cd <= 0) {
         clearInterval(t);
-        setPhase('slowdown');
+        if (warningActiveRef.current) {
+          setSpeed(0);
+          setPhase('stopped');
+        }
       }
     }, 1000);
-    return () => clearInterval(t);
-  }, [phase]);
-
-  // 속도 감속
-  useEffect(() => {
-    if (phase !== 'slowdown') return;
-    setSpeed(MAX_SPEED);
-    let spd = MAX_SPEED;
-    const t = setInterval(() => {
-      spd = Math.max(0, spd - 2);
-      setSpeed(spd);
-      if (spd <= 0) {
-        clearInterval(t);
-        setPhase('stopped');
-      }
-    }, 500);
     return () => clearInterval(t);
   }, [phase]);
 
@@ -587,7 +595,7 @@ export default function MonitoringScreen() {
 
       {/* ── 감속 패널 (감속/정지 상태일 때만) ── */}
       {(phase === 'slowdown' || phase === 'stopped') && (
-        <SlowdownPanel speed={speed} />
+        <SlowdownPanel phase={phase} speed={speed} countdown={countdown} />
       )}
 
       <ScrollView contentContainerStyle={s.content}>
@@ -614,7 +622,14 @@ export default function MonitoringScreen() {
         <View style={[s.card, { backgroundColor: T.bgAlt }]}>
           <Text style={s.cardMeta}>추후 구현 예정</Text>
           <View style={s.statRow}>
-            {['현재 속도', '이동 거리', '배터리'].map(l => (
+            <View style={s.stat}>
+              <Text style={[s.statVal, phase !== 'normal' && { color: T.err }]}>
+                {phase === 'normal' ? MAX_SPEED : speed}
+                <Text style={s.statUnit}> km/h</Text>
+              </Text>
+              <Text style={s.statLabel}>제한속도</Text>
+            </View>
+            {['이동 거리', '배터리'].map(l => (
               <View key={l} style={s.stat}>
                 <Text style={[s.statVal, { color: T.textMuted }]}>-</Text>
                 <Text style={s.statLabel}>{l}</Text>
@@ -685,6 +700,7 @@ const s = StyleSheet.create({
   statRow: { flexDirection: 'row' },
   stat: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 4 },
   statVal: { fontSize: 24, fontWeight: '700', color: T.text, fontVariant: ['tabular-nums'] },
+  statUnit: { fontSize: 10, fontWeight: '500' },
   statLabel: { fontSize: 11, color: T.textMuted },
   statDivider: { width: 1, backgroundColor: T.border },
   unimplBadge: {
