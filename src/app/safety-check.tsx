@@ -172,7 +172,7 @@ export default function SafetyCheckScreen() {
             const data: SafetySensorData = {
               ...received,
               weight: typeof received.weight === 'number'
-                ? Math.max(0, received.weight)
+                ? received.weight < 1 ? 0 : received.weight
                 : received.weight,
             };
             setSensor(data);
