@@ -268,13 +268,17 @@ export default function SafetyCheckScreen() {
     }
     if (sensor.blow_signal_seen || sensor.blow_status === 'blowing' || sensor.blow_status === 'success') return;
 
+    const diagnosticDelayMs = Math.max(
+      1000,
+      (sensor.blow_required_seconds ?? 0.5) * 2000,
+    );
     const timer = setTimeout(() => {
       setBlowHint(sensor.blow_monitoring
         ? '호흡 신호가 감지되지 않습니다. 센서의 DO 배선과 감도를 확인해주세요.'
         : 'STM32의 측정 시작 신호를 기다리고 있습니다. 펌웨어와 UART 연결을 확인해주세요.');
-    }, 1500);
+    }, diagnosticDelayMs);
     return () => clearTimeout(timer);
-  }, [modalStage, sensor.blow_error, sensor.blow_monitoring, sensor.blow_signal_seen, sensor.blow_status]);
+  }, [modalStage, sensor.blow_error, sensor.blow_monitoring, sensor.blow_required_seconds, sensor.blow_signal_seen, sensor.blow_status]);
 
   const startRide = useCallback(async () => {
     if (rideStartingRef.current) return;
@@ -311,7 +315,7 @@ export default function SafetyCheckScreen() {
     updateCheck('rider', { status: 'checking', value: sensor.weight === undefined ? '감지 중' : `${sensor.weight} kg` });
     void startWeightCheck();
   };
-  const blowRequiredSeconds = sensor.blow_required_seconds ?? 1;
+  const blowRequiredSeconds = sensor.blow_required_seconds ?? 0.5;
   const blowDuration = Math.min(sensor.blow_duration ?? 0, blowRequiredSeconds);
   const blowProgress = Math.max(0, Math.min(100, (sensor.blow_progress ?? 0) * 100));
   const baselineReady = sensor.baseline_status === 'ready';
