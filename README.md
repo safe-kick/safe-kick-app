@@ -326,7 +326,8 @@ safety-check.tsx
   → 음주 측정 안내 모달에서 시작 버튼을 누르면 POST /session/alcohol-check 호출
   → SSE(/session/stream)로 safety_state와 실제 STM32 센서 결과 수신
   → checking_alcohol 동안 음주 측정 결과 대기
-  → 통과 시 탑승 안내를 표시하고 POST /session/weight-check를 한 번 호출
+  → 통과 시 탑승 인원 감지 안내 화면을 3초간 표시해 사용자가 혼자 올라갈 시간을 제공
+  → 3초 후 POST /session/weight-check를 한 번 자동 호출
   → checking_rider → unlocking → monitoring 순서로 탑승 인원 및 잠금 해제 확인
   → monitoring + is_locked=false일 때만 안전점검 통과
   → 2초 카운트다운 후 POST /rides/start (Node) → ride_id 저장 → 모니터링 화면 자동 이동
