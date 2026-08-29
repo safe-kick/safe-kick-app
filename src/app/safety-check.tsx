@@ -33,6 +33,9 @@ interface SafetySensorData {
   blow_required_seconds?: number;
   blow_progress?: number;
   hw484_blow_detected?: boolean;
+  blow_monitoring?: boolean;
+  blow_signal_seen?: boolean;
+  blow_error?: string | null;
 }
 
 const INITIAL_CHECKS: CheckItem[] = [
@@ -77,12 +80,14 @@ export default function SafetyCheckScreen() {
   const [userId, setUserId] = useState<number | null>(null);
   const [startingCommand, setStartingCommand] = useState(false);
   const [fatalError, setFatalError] = useState('');
+  const [blowHint, setBlowHint] = useState('');
   const [allPassed, setAllPassed] = useState(false);
   const [countdown, setCountdown] = useState(2);
   const eventSourceRef = useRef<EventSource | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const riderCheckStartedRef = useRef(false);
   const alcoholSuccessHandledRef = useRef(false);
+  const alcoholCommandPendingRef = useRef(false);
   const rideStartingRef = useRef(false);
 
   const updateCheck = useCallback((id: CheckItem['id'], patch: Partial<CheckItem>) => {
@@ -92,13 +97,16 @@ export default function SafetyCheckScreen() {
   const startAlcoholCheck = useCallback(async () => {
     if (!userId || startingCommand) return;
     setStartingCommand(true);
+    alcoholCommandPendingRef.current = true;
     setFatalError('');
+    setBlowHint('');
     setModalStage('alcoholMeasuring');
     updateCheck('alcohol', { status: 'checking', value: '측정 중' });
     try {
       const response = await raspiApiCall('POST', '/session/alcohol-check', { user_id: userId });
       if (!response?.data?.accepted) throw new Error(response?.message || '음주 측정을 시작하지 못했습니다.');
     } catch (error) {
+      alcoholCommandPendingRef.current = false;
       setFatalError(errorDetail(error));
       setModalStage('alcoholGuide');
     } finally {
@@ -186,11 +194,14 @@ export default function SafetyCheckScreen() {
               return;
             }
             if (data.safety_state === 'checking_alcohol') {
+              alcoholCommandPendingRef.current = false;
+              setFatalError('');
               setModalStage('alcoholMeasuring');
               updateCheck('alcohol', { status: 'checking', value: data.blow_status === 'success' ? '호흡 확인' : '측정 중' });
               return;
             }
             if (data.safety_state === 'alcohol_retry') {
+              if (alcoholCommandPendingRef.current) return;
               setFatalError('호흡이 충분하지 않습니다. 다시 측정해주세요.');
               setModalStage('alcoholGuide');
               updateCheck('alcohol', { status: 'checking', value: '재시도 필요' });
@@ -248,6 +259,23 @@ export default function SafetyCheckScreen() {
     };
   }, [updateCheck]);
 
+  useEffect(() => {
+    setBlowHint('');
+    if (modalStage !== 'alcoholMeasuring') return;
+    if (sensor.blow_error === 'gpio_read_failed') {
+      setBlowHint('호흡 센서 GPIO를 읽지 못했습니다. 배선과 GPIO 17 설정을 확인해주세요.');
+      return;
+    }
+    if (sensor.blow_signal_seen || sensor.blow_status === 'blowing' || sensor.blow_status === 'success') return;
+
+    const timer = setTimeout(() => {
+      setBlowHint(sensor.blow_monitoring
+        ? '호흡 신호가 감지되지 않습니다. 센서의 DO 배선과 감도를 확인해주세요.'
+        : 'STM32의 측정 시작 신호를 기다리고 있습니다. 펌웨어와 UART 연결을 확인해주세요.');
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [modalStage, sensor.blow_error, sensor.blow_monitoring, sensor.blow_signal_seen, sensor.blow_status]);
+
   const startRide = useCallback(async () => {
     if (rideStartingRef.current) return;
     rideStartingRef.current = true;
@@ -276,11 +304,12 @@ export default function SafetyCheckScreen() {
     return () => clearInterval(timer);
   }, [allPassed, startRide]);
 
-  const retryAlcohol = () => { alcoholSuccessHandledRef.current = false; setFatalError(''); void startAlcoholCheck(); };
+  const retryAlcohol = () => { alcoholSuccessHandledRef.current = false; setFatalError(''); setBlowHint(''); void startAlcoholCheck(); };
   const retryRider = () => {
+    riderCheckStartedRef.current = false;
     setFatalError('');
     updateCheck('rider', { status: 'checking', value: sensor.weight === undefined ? '감지 중' : `${sensor.weight} kg` });
-    setModalStage('riderMeasuring');
+    void startWeightCheck();
   };
   const blowRequiredSeconds = sensor.blow_required_seconds ?? 1;
   const blowDuration = Math.min(sensor.blow_duration ?? 0, blowRequiredSeconds);
@@ -311,7 +340,7 @@ export default function SafetyCheckScreen() {
 
       {modalStage ? <View style={styles.overlay}><View style={styles.modal}>
         {modalStage === 'alcoholGuide' ? <><ModalTitle icon="🌬️" title="음주 측정 안내" tone="blue" /><View style={styles.sensorDiagram}><Text style={styles.diagramLabel}>센서</Text><View style={styles.diagramRow}><View style={styles.handle} /><Text style={styles.sensorCircle}>●</Text><View style={styles.handle} /></View><Text style={styles.diagramCaption}>핸들 중앙 = 음주 측정 센서</Text></View><Text style={styles.bodyText}>킥보드 손잡이 가운데에 있는 <Text style={styles.blueStrong}>음주 측정 센서</Text>에 숨을 불어주세요.</Text><Text style={styles.mutedText}>{baselineReady ? '측정 준비가 완료되었습니다. 아래 시작 버튼을 눌러주세요.' : sensor.baseline_status === 'failed' ? '센서 기준값을 다시 측정해주세요.' : '센서 기준값을 준비하고 있습니다.'}</Text>{fatalError ? <Text style={styles.inlineError}>{fatalError}</Text> : null}<View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label={startingCommand ? '처리 중...' : baselineReady ? '음주 측정 시작' : sensor.baseline_status === 'failed' ? '기준값 다시 측정' : '준비 중...'} onPress={() => void (baselineReady ? startAlcoholCheck() : retryBaseline())} disabled={startingCommand || !userId || (!baselineReady && sensor.baseline_status !== 'failed')} /></View></> : null}
-        {modalStage === 'alcoholMeasuring' ? <><ModalTitle icon="🔄" title="음주 측정 중" tone="blue" /><Text style={styles.bodyText}>{blowMessage}</Text><View style={styles.measureRow}><Text style={styles.mutedText}>호흡 유지</Text><Text style={styles.measureValue}>{blowDuration.toFixed(2)} / {blowRequiredSeconds.toFixed(2)}초</Text></View><Progress value={blowProgress} /><Dots active={0} /></> : null}
+        {modalStage === 'alcoholMeasuring' ? <><ModalTitle icon="🔄" title="음주 측정 중" tone="blue" /><Text style={styles.bodyText}>{blowMessage}</Text>{blowHint ? <Text style={styles.inlineError}>{blowHint}</Text> : null}<View style={styles.measureRow}><Text style={styles.mutedText}>호흡 유지</Text><Text style={styles.measureValue}>{blowDuration.toFixed(2)} / {blowRequiredSeconds.toFixed(2)}초</Text></View><Progress value={blowProgress} /><Dots active={0} /></> : null}
         {modalStage === 'alcoholSuccess' ? <><ModalTitle icon="✅" title="음주 측정 완료" tone="green" /><View style={styles.successBox}><Text style={styles.successTitle}>음주 측정을 통과했습니다.</Text><Text style={styles.successSub}>측정값: {sensor.gas ?? 0} ppm</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>탑승 인원 감지로 이동 중...</Text><Dots active={0} color={T.ok} /></> : null}
         {modalStage === 'alcoholFail' ? <><ModalTitle icon="⚠️" title="음주 감지됨" tone="red" /><View style={styles.failBox}><Text style={styles.failTitle}>음주가 감지되어 운행이 제한됩니다.</Text><Text style={styles.failSub}>측정값: {sensor.gas ?? 0} ppm (기준치 초과)</Text></View><Text style={styles.mutedText}>음주 상태에서는 킥보드를 이용할 수 없습니다. 안전을 위해 탑승을 삼가주세요.</Text><View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label="다시 측정" onPress={retryAlcohol} /></View></> : null}
         {modalStage === 'riderGuide' ? <><ModalTitle icon="🛴" title="탑승 인원 감지 안내" tone="blue" /><View style={styles.riderDiagram}><Text style={styles.riderPerson}>◯</Text><View style={styles.riderBody} /><View style={styles.board} /><View style={styles.wheels}><Text>●</Text><Text>●</Text></View><Text style={styles.diagramCaption}>1인만 탑승하세요</Text></View><Text style={styles.bodyText}>킥보드에 혼자 올라가 주세요. 탑승 인원은 자동으로 감지됩니다.</Text><View style={styles.warningBox}><Text style={styles.warningText}>⚠ 라이딩 중 추가 탑승자가 감지되면 안전을 위해 킥보드가 감속 후 정지됩니다.</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>자동 감지 시작 중...</Text></> : null}
