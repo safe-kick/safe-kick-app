@@ -70,9 +70,10 @@ export default function LicenseConfirmScreen() {
   const [fields, setFields] = useState(EMPTY_FIELDS);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
 
-  const { name, email, password } = useLocalSearchParams<{
+  const { name, email, phone, password } = useLocalSearchParams<{
     name: string;
     email: string;
+    phone: string;
     password: string;
   }>();
 
@@ -115,7 +116,7 @@ export default function LicenseConfirmScreen() {
   const goRetakePhoto = () => {
     router.replace({
       pathname: "/license-capture",
-      params: { name, email, password },
+      params: { name, email, phone, password },
     });
   };
 
@@ -181,6 +182,7 @@ export default function LicenseConfirmScreen() {
         const registerRes = await apiCall("POST", "/auth/register", {
           name,
           email,
+          phone,
           password,
           license_no: fields.licenseNo || "미인식",
           license_expires_at: toIsoDate(fields.expiresAt) || "2030-01-01",

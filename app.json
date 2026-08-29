@@ -10,7 +10,8 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "infoPlist": {
-        "NSCameraUsageDescription": "QR 스캔, 본인 인증(셀피), 면허증 촬영을 위해 카메라가 필요합니다."
+        "NSCameraUsageDescription": "QR 스캔, 본인 인증(셀피), 면허증 촬영을 위해 카메라가 필요합니다.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.anonymous.safekickapp"
     },

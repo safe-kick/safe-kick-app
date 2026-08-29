@@ -18,9 +18,10 @@ export default function LicenseCaptureScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
 
-  const { name, email, password } = useLocalSearchParams<{
+  const { name, email, phone, password } = useLocalSearchParams<{
     name: string;
     email: string;
+    phone: string;
     password: string;
   }>();
 
@@ -39,6 +40,7 @@ export default function LicenseCaptureScreen() {
         params: {
           name,
           email,
+          phone,
           password,
         },
       });
@@ -77,6 +79,7 @@ export default function LicenseCaptureScreen() {
       params: {
         name,
         email,
+        phone,
         password,
       },
     });

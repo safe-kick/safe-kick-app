@@ -32,7 +32,7 @@ export default function RegisterScreen() {
   const [error, setError] = useState('');
 
   const handleNext = async () => {
-    if (!name || !email || !password || !passwordConfirm) {
+    if (!name || !email || !phone || !password || !passwordConfirm) {
       setError('모든 항목을 입력하세요.');
       return;
     }
@@ -54,6 +54,7 @@ export default function RegisterScreen() {
       params: {
         name,
         email,
+        phone,
         password,
       },
     });
