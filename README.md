@@ -14,7 +14,7 @@ Safe Kick - AI 기반 전동 킥보드 안전 인증 앱 (React Native / Expo)
 - QR 스캔으로 킥보드 연결 (`safekickapp://ride?v=1&kickboard_id=...` 딥링크 형식)
 - 셀피 촬영을 통한 본인 확인 (얼굴 인증, 라즈베리파이 연동)
 - 안전 점검 (헬멧 착용, 음주 측정, 탑승 인원 감지)
-- 라이딩 중 실시간 모니터링 및 경고 (SSE) — 이중 탑승/헬멧 미착용/음주/얼굴 인식 실패 4종 대응
+- 라이딩 중 Raspberry Pi SSE 상태 모니터링 및 추가 탑승 경고 대응
 - 반납 및 실제 운행 요약 조회
 
 ---
@@ -239,15 +239,16 @@ npx expo start --dev-client
 
 ## 🌐 서버 연결
 
-`EXPO_PUBLIC_USE_MOCK=true`면 서버 없이도 **mock 데이터로 자동 동작**해요.
-서버를 켜면 자동으로 실제 서버 데이터를 사용해요.
+`EXPO_PUBLIC_USE_MOCK=true`이면 Node.js 앱 서버의 일부 조회·운행 API가
+서버 연결 실패 시 mock 데이터로 대체됩니다. 회원가입과 로그인은 mock으로
+대체되지 않으며, Raspberry Pi API에는 mock 폴백이 없습니다.
 
 앱은 두 개의 서로 다른 백엔드와 통신합니다:
 
 | 함수             | 대상 서버                                | 용도                                                                                                            |
 | ---------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `apiCall()`      | `safe-kick-server` (Node.js 앱서버)      | 회원가입/로그인/운행기록 등, `USE_MOCK=true`일 때만 mock 자동 폴백 지원 (단, 회원가입/로그인은 mock 사용 안 함) |
-| `raspiApiCall()` | `safe-kick-raspi` (라즈베리파이 FastAPI) | 얼굴 검출/등록/인증(`/face/detect`, `/face/register`, `/face/verify`), 세션/잠금 제어 — mock 폴백 없음          |
+| `raspiApiCall()` | `safe-kick-raspi` (라즈베리파이 FastAPI) | 얼굴 검출·등록·실시간 얼굴/헬멧 인증(`/face/detect`, `/face/register`, `/face/live-verify`), 세션·안전 제어 — mock 폴백 없음 |
 
 ### 앱 서버 실행 방법
 
@@ -282,8 +283,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-- `USE_UART_MOCK` 환경변수가 기본 `true`라 STM32 없이도 실행 가능
-- `/face/detect`, `/face/register`, `/face/verify`, `/session/*`는 InsightFace 기반 실제 로직이라 하드웨어 무관하게 동작
+- 환경변수를 별도로 지정하지 않으면 코드 기본값은 `USE_UART_MOCK=true`입니다. 저장소의 `.env.example`은 실제 장비 기준으로 `false`이므로 PC 테스트에서는 명시적으로 `true`로 바꿔야 합니다.
+- 얼굴 API는 STM32 없이 사용할 수 있지만, 세션 안전 흐름은 실제 STM32 또는 `USE_UART_MOCK=true`가 필요합니다.
 - 실행 후 `http://localhost:8000/docs`에서 Swagger UI로 API 직접 테스트 가능
 
 ---
@@ -331,14 +332,19 @@ safety-check.tsx
   → 2초 카운트다운 후 POST /rides/start (Node) → ride_id 저장 → 모니터링 화면 자동 이동
   ↓
 monitoring.tsx
-  → SSE(/session/stream)로 실시간 얼굴점수/무게/가스/잠금상태 수신
-  → 경고 사유 4종 대응: two_person / helmet_fail / drunk / face_fail
+  → SSE(/session/stream)로 얼굴·헬멧 인증 상태, 무게, MQ-3 원시값, 잠금 상태 수신
+  → 현재 주행 중 자동 경고는 추가 탑승(two_person)을 기준으로 동작
+  → drunk는 주행 전 검사에서 차단하며, helmet_fail/face_fail 표시는 향후 주행 중 재인증 이벤트와 호환하기 위해 유지
   → 반납 시: GET /session/summary → POST /session/end → PATCH /rides/:rideId/end
   ↓
 return-complete.tsx
   → AsyncStorage의 session_summary(실제 데이터)로 요약 표시
   → 데이터 없으면 mock 표시 + 화면에 "예시 데이터" 경고
 ```
+
+> MQ-3의 `gas` 값은 ppm이나 혈중알코올농도가 아니라 STM32 ADC 원시값입니다.
+> 현재 일부 앱 화면에 `ppm`으로 표시되는 부분은 표시 문구이며, 판정은 Raspberry Pi의
+> baseline 대비 증가량과 절대 원시값 기준으로 수행됩니다.
 
 ### AsyncStorage 키 정리
 
@@ -557,15 +563,17 @@ apiCall() 호출 (USE_MOCK=true인 경우)
 콘솔에서 현재 모드 확인 가능:
 
 ```
-[API] 서버 오프라인 → mock 사용: POST /auth/login
+[API] 서버 오프라인 → mock 사용: GET /rides/recent
 [API] 서버 응답: GET /rides/recent
 ```
 
 ---
 
-## 🧪 테스트 계정 (mock 모드)
+## 🧪 화면 확인용 mock 데이터
 
-`USE_MOCK=true`이고 서버가 꺼져있을 때 아무 이메일/비밀번호나 입력해도 로그인돼요 (단, 회원가입/로그인 자체는 mock 대상에서 제외되어 있으니 실제로는 서버가 필요합니다 — 그 외 화면의 mock 데이터 확인용).
+회원가입과 로그인은 mock 대상이 아니므로 실제 Node.js 서버가 필요합니다. 로그인 후
+Node.js 서버 연결이 끊어진 경우에는 아래 사용자·운행 예시 데이터로 일부 화면을
+확인할 수 있습니다.
 
 | 항목     | 값               |
 | -------- | ---------------- |
