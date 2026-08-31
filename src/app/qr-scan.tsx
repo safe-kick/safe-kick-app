@@ -284,12 +284,6 @@ export default function QRScanScreen() {
           </TouchableOpacity>
         )}
 
-        <Text style={s.manualLink}>
-          QR이 안 되나요?{" "}
-          <Text style={{ textDecorationLine: "underline" }}>
-            코드 직접 입력
-          </Text>
-        </Text>
       </View>
     </View>
   );
@@ -365,9 +359,4 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   mockBtnText: { color: "#FFF", fontSize: 14, fontWeight: "600" },
-  manualLink: {
-    textAlign: "center",
-    fontSize: 12,
-    color: "rgba(255,255,255,0.35)",
-  },
 });
