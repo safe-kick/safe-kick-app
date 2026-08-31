@@ -208,7 +208,7 @@ export default function SelfieScreen() {
         <Text style={s.faceSub} accessibilityLiveRegion="polite">{message}</Text>
       </View>
       <View style={s.bottom}>
-        <View style={s.privacyBox}><Text style={s.privacyText}>🔒 촬영 이미지는 실시간 인증에만 사용되며 앱에 저장되지 않습니다.</Text></View>
+        <View style={s.privacyBox}><Text style={s.privacyText}>🔒 카메라 화면은 얼굴 인증과 헬멧 착용 확인에만 사용되며 앱에 저장되지 않습니다.</Text></View>
         {Platform.OS !== "web" && !permission?.granted && <TouchableOpacity style={s.permissionBtn} onPress={requestPermission}><Text style={s.permissionBtnText}>카메라 권한 허용</Text></TouchableOpacity>}
       </View>
     </View>

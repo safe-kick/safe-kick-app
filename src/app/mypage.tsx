@@ -130,11 +130,6 @@ export default function MyPageScreen() {
                   </View>
                   <WFBadge label="유효" status="ok" />
                 </View>
-                <View style={s.privacyBox}>
-                  <Text style={s.privacyText}>
-                    🔒  얼굴 벡터 데이터는 세션 종료 시 자동 삭제됩니다. 서버에 저장되지 않습니다.
-                  </Text>
-                </View>
               </WFCard>
             </>
           )}
@@ -194,8 +189,6 @@ const s = StyleSheet.create({
   licenseType: { fontSize: 14, fontWeight: '600', color: T.text },
   licenseNo: { fontSize: 11, color: T.textMuted, marginTop: 2 },
   licenseExp: { fontSize: 11, color: T.textMuted },
-  privacyBox: { backgroundColor: T.bgAlt, borderRadius: 8, padding: 8 },
-  privacyText: { fontSize: 11, color: T.textMuted, lineHeight: 16 },
   rideCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, marginBottom: 8 },
   rideId: { fontSize: 13, fontWeight: '600', color: T.text },
   rideDate: { fontSize: 12, color: T.textMuted, marginTop: 2 },
