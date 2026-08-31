@@ -76,7 +76,7 @@ export default function SafetyCheckScreen() {
   const [checks, setChecks] = useState<CheckItem[]>(INITIAL_CHECKS);
   const [modalStage, setModalStage] = useState<ModalStage>('alcoholGuide');
   const [sensor, setSensor] = useState<SafetySensorData>({});
-  const [kickboardId, setKickboardId] = useState('KICK-A23F');
+  const [kickboardId, setKickboardId] = useState('KB-7F3A9C2D');
   const [userId, setUserId] = useState<number | null>(null);
   const [startingCommand, setStartingCommand] = useState(false);
   const [fatalError, setFatalError] = useState('');
@@ -184,11 +184,11 @@ export default function SafetyCheckScreen() {
               setFatalError('센서 기준값 측정에 실패했습니다. 기준값을 다시 측정해주세요.');
             }
             const alcoholFailed = data.is_drunk === true || data.warning_reason === 'drunk';
-            const initialOverweight = data.safety_state === 'checking_rider' && (data.weight ?? 0) >= 110;
+            const initialOverweight = data.safety_state === 'checking_rider' && (data.weight ?? 0) > 100;
             const riderFailed = data.is_two_person === true || data.warning_reason === 'two_person' || initialOverweight;
 
             if (alcoholFailed) {
-              updateCheck('alcohol', { status: 'fail', value: `${data.gas ?? 0} ppm` });
+              updateCheck('alcohol', { status: 'fail', value: '감지' });
               setModalStage('alcoholFail');
               alcoholSuccessHandledRef.current = false;
               return;
@@ -209,7 +209,7 @@ export default function SafetyCheckScreen() {
             }
             if (data.safety_state === 'waiting_rider' && !alcoholSuccessHandledRef.current) {
               alcoholSuccessHandledRef.current = true;
-              updateCheck('alcohol', { status: 'ok', value: `${data.gas ?? 0} ppm` });
+              updateCheck('alcohol', { status: 'ok', value: '통과' });
               setModalStage('alcoholSuccess');
               transitionTimerRef.current = setTimeout(() => setModalStage('riderGuide'), 1500);
               return;
@@ -345,8 +345,8 @@ export default function SafetyCheckScreen() {
       {modalStage ? <View style={styles.overlay}><View style={styles.modal}>
         {modalStage === 'alcoholGuide' ? <><ModalTitle icon="🌬️" title="음주 측정 안내" tone="blue" /><View style={styles.sensorDiagram}><Text style={styles.diagramLabel}>센서</Text><View style={styles.diagramRow}><View style={styles.handle} /><Text style={styles.sensorCircle}>●</Text><View style={styles.handle} /></View><Text style={styles.diagramCaption}>핸들 중앙 = 음주 측정 센서</Text></View><Text style={styles.bodyText}>킥보드 손잡이 가운데에 있는 <Text style={styles.blueStrong}>음주 측정 센서</Text>에 숨을 불어주세요.</Text><Text style={styles.mutedText}>{baselineReady ? '측정 준비가 완료되었습니다. 아래 시작 버튼을 눌러주세요.' : sensor.baseline_status === 'failed' ? '센서 기준값을 다시 측정해주세요.' : '센서 기준값을 준비하고 있습니다.'}</Text>{fatalError ? <Text style={styles.inlineError}>{fatalError}</Text> : null}<View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label={startingCommand ? '처리 중...' : baselineReady ? '음주 측정 시작' : sensor.baseline_status === 'failed' ? '기준값 다시 측정' : '준비 중...'} onPress={() => void (baselineReady ? startAlcoholCheck() : retryBaseline())} disabled={startingCommand || !userId || (!baselineReady && sensor.baseline_status !== 'failed')} /></View></> : null}
         {modalStage === 'alcoholMeasuring' ? <><ModalTitle icon="🔄" title="음주 측정 중" tone="blue" /><Text style={styles.bodyText}>{blowMessage}</Text>{blowHint ? <Text style={styles.inlineError}>{blowHint}</Text> : null}<View style={styles.measureRow}><Text style={styles.mutedText}>호흡 유지</Text><Text style={styles.measureValue}>{blowDuration.toFixed(2)} / {blowRequiredSeconds.toFixed(2)}초</Text></View><Progress value={blowProgress} /><Dots active={0} /></> : null}
-        {modalStage === 'alcoholSuccess' ? <><ModalTitle icon="✅" title="음주 측정 완료" tone="green" /><View style={styles.successBox}><Text style={styles.successTitle}>음주 측정을 통과했습니다.</Text><Text style={styles.successSub}>측정값: {sensor.gas ?? 0} ppm</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>탑승 인원 감지로 이동 중...</Text><Dots active={0} color={T.ok} /></> : null}
-        {modalStage === 'alcoholFail' ? <><ModalTitle icon="⚠️" title="음주 감지됨" tone="red" /><View style={styles.failBox}><Text style={styles.failTitle}>음주가 감지되어 운행이 제한됩니다.</Text><Text style={styles.failSub}>측정값: {sensor.gas ?? 0} ppm (기준치 초과)</Text></View><Text style={styles.mutedText}>음주 상태에서는 킥보드를 이용할 수 없습니다. 안전을 위해 탑승을 삼가주세요.</Text><View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label="다시 측정" onPress={retryAlcohol} /></View></> : null}
+        {modalStage === 'alcoholSuccess' ? <><ModalTitle icon="✅" title="음주 측정 완료" tone="green" /><View style={styles.successBox}><Text style={styles.successTitle}>음주 측정을 통과했습니다.</Text><Text style={styles.successSub}>측정 결과: 통과</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>탑승 인원 감지로 이동 중...</Text><Dots active={0} color={T.ok} /></> : null}
+        {modalStage === 'alcoholFail' ? <><ModalTitle icon="⚠️" title="음주 감지됨" tone="red" /><View style={styles.failBox}><Text style={styles.failTitle}>음주가 감지되어 운행이 제한됩니다.</Text><Text style={styles.failSub}>측정 결과: 감지</Text></View><Text style={styles.mutedText}>음주 상태에서는 킥보드를 이용할 수 없습니다. 안전을 위해 탑승을 삼가주세요.</Text><View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label="다시 측정" onPress={retryAlcohol} /></View></> : null}
         {modalStage === 'riderGuide' ? <><ModalTitle icon="🛴" title="탑승 인원 감지 안내" tone="blue" /><View style={styles.riderDiagram}><Text style={styles.riderPerson}>◯</Text><View style={styles.riderBody} /><View style={styles.board} /><View style={styles.wheels}><Text>●</Text><Text>●</Text></View><Text style={styles.diagramCaption}>1인만 탑승하세요</Text></View><Text style={styles.bodyText}>킥보드에 혼자 올라가 주세요. 탑승 인원은 자동으로 감지됩니다.</Text><View style={styles.warningBox}><Text style={styles.warningText}>⚠ 라이딩 중 추가 탑승자가 감지되면 안전을 위해 킥보드가 감속 후 정지됩니다.</Text></View><Text style={[styles.mutedText, { textAlign: 'center' }]}>3초 후 자동 감지를 시작합니다.</Text></> : null}
         {modalStage === 'riderMeasuring' ? <><ModalTitle icon="⚖️" title="탑승 인원 확인 중" tone="blue" /><Text style={styles.bodyText}>측정이 끝날 때까지 킥보드 위에서 움직이지 말아주세요.</Text><View style={styles.weightBox}><Text style={styles.weightLabel}>⚖️  자동 감지 중...</Text><Text style={styles.weightValue}>{sensor.weight ?? '—'} kg</Text></View><Progress value={riderProgress} /></> : null}
         {modalStage === 'riderFail' ? <><ModalTitle icon="⚠️" title="추가 탑승자 감지됨" tone="red" /><View style={styles.failBox}><Text style={styles.failTitle}>2인 이상 탑승이 감지되었습니다.</Text><Text style={styles.failSub}>감지 중량: {sensor.weight ?? 0} kg</Text></View><Text style={styles.mutedText}>혼자만 탑승 후 다시 시도해 주세요.</Text><View style={styles.buttonRow}><ModalButton label="취소" onPress={() => router.replace('/main')} secondary /><ModalButton label="다시 감지" onPress={retryRider} /></View></> : null}
