@@ -16,7 +16,7 @@ import { RASPI_API_BASE, RASPI_IP } from '../constants/api';
 
 // ─── 타입 ────────────────────────────────────────────────
 type Phase = 'normal' | 'remeasure' | 'slowdown' | 'stopped';
-type WarningReason = 'two_person' | 'helmet_fail' | 'drunk' | 'face_fail';
+type WarningReason = 'two_person';
 
 interface SensorRow {
   label: string;
@@ -33,38 +33,17 @@ const SSE_RECONNECT_MS = 2_000;
 // 경고 사유별 타이틀
 const WARNING_TITLES: Record<WarningReason, string> = {
   two_person: '이중 탑승 감지됨',
-  helmet_fail: '헬멧 미착용 감지됨',
-  drunk: '음주 감지됨',
-  face_fail: '탑승자 얼굴 인식 실패',
 };
 
 // 경고 사유 + 단계에 따른 서브 텍스트
 function getWarningSub(reason: WarningReason, phase: Phase) {
   if (phase === 'stopped') {
-    switch (reason) {
-      case 'helmet_fail':
-        return '완전 정지됨 — 헬멧 착용 후 재시작하세요';
-      case 'drunk':
-        return '완전 정지됨 — 음주 상태에서는 재시작할 수 없습니다';
-      case 'face_fail':
-        return '완전 정지됨 — 등록된 탑승자 확인 후 재시작하세요';
-      default:
-        return '완전 정지됨 — 1인 탑승 후 재시작하세요';
-    }
+    return '완전 정지됨 — 1인 탑승 후 재시작하세요';
   }
   if (reason === 'two_person' && phase === 'slowdown') {
     return '5초 동안 지속되면 잠금 처리됩니다';
   }
-  switch (reason) {
-    case 'helmet_fail':
-      return '헬멧을 착용한 후 계속하세요';
-    case 'drunk':
-      return '음주 상태가 해제되지 않으면 자동 정지됩니다';
-    case 'face_fail':
-      return '얼굴이 다시 인식되지 않으면 자동 정지됩니다';
-    default:
-      return '단독 탑승 확인 시 자동 해제';
-  }
+  return '단독 탑승 확인 시 자동 해제';
 }
 
 // ─── 단계 인디케이터 ──────────────────────────────────────
@@ -186,7 +165,7 @@ function WarningBanner({ phase, reason, countdown, cdProgress }: {
       <View style={wb.row}>
         <View style={[wb.iconBox, { backgroundColor: isDanger ? 'rgba(198,40,40,0.12)' : 'rgba(230,81,0,0.12)' }]}>
           <Text style={{ fontSize: 16 }}>
-            {reason === 'helmet_fail' ? '🪖' : reason === 'drunk' ? '🍺' : reason === 'face_fail' ? '🚫' : '⚠'}
+            ⚠
           </Text>
         </View>
         <View style={{ flex: 1 }}>
@@ -295,8 +274,6 @@ export default function MonitoringScreen() {
   const [speed, setSpeed] = useState(MAX_SPEED);
   const cdProgress = useRef(new Animated.Value(1)).current;
   const [kickboardId, setKickboardId] = useState('');
-  const [gas, setGas] = useState(0);
-  const [helmetVerified, setHelmetVerified] = useState(true);
   const [stm32Connected, setStm32Connected] = useState(false);
   const [warningCount, setWarningCount] = useState(0);
   const [warningReason, setWarningReason] = useState<WarningReason | null>(null);
@@ -329,11 +306,9 @@ export default function MonitoringScreen() {
 
         try {
           const data = JSON.parse(event.data);
-          const nextWarning = data.warning_reason as WarningReason | null;
+          const nextWarning: WarningReason | null = data.warning_reason === 'two_person' ? 'two_person' : null;
           const locked = data.is_locked === true || data.safety_state === 'locked';
 
-          setGas(data.gas);
-          setHelmetVerified(data.helmet_verified !== false);
           setStm32Connected(data.stm32_connected === true);
           setWarningReason(nextWarning);
 
@@ -536,24 +511,19 @@ export default function MonitoringScreen() {
   // 센서 상태
   const sensors: SensorRow[] = [
     {
-      label: '가스 센서 (알코올)',
-      status: warningReason === 'drunk' ? 'warn' : 'ok',
-      value: `${gas} ppm`,
+      label: '음주 측정',
+      status: 'ok',
+      value: '운행 전 점검 완료',
     },
     {
-      label: '헬멧 착용 감지',
-      status: helmetVerified ? 'ok' : 'warn',
-      value: helmetVerified ? '착용' : '미착용',
+      label: '헬멧 착용',
+      status: 'ok',
+      value: '운행 전 점검 완료',
     },
     {
       label: '탑승 인원 감지',
       status: warningReason === 'two_person' ? 'warn' : 'ok',
       value: warningReason === 'two_person' ? '2명 감지' : '1명',
-    },
-    {
-      label: 'GPS 위치',
-      status: 'ok',
-      value: '신호 양호',
     },
     {
       label: 'STM32 컨트롤러',
